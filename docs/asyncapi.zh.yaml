@@ -1,0 +1,310 @@
+asyncapi: '2.6.0'
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 清一色对战 — AsyncAPI 规范（中文版）
+#
+# 如何维护此文件
+# ──────────────────────────────────────────────────────────────────────────────
+# • 本文件是 WebSocket（及未来 HTTP）API 的唯一中文参考文档。
+# • 新增 WebSocket 动作时：
+#     1. 在 components/schemas/ActionType/enum 中添加动作名称
+#     2. 若载荷结构不同，在 components/messages/ 中添加对应消息定义
+#     3. 在 channel 的 publish/subscribe oneOf 列表中引用新消息
+# • 新增 HTTP 接口时，以 http binding 格式添加新 channel。
+# • 验证规范：在线访问 https://studio.asyncapi.com 粘贴 YAML 进行校验，
+#   或运行：npx @asyncapi/cli validate docs/asyncapi.zh.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+
+info:
+  title: 清一色对战 API
+  version: '1.0.0'
+  description: |
+    两人实时清一色麻将对战游戏。
+
+    所有游戏通信通过每位玩家的单条 WebSocket 连接进行。
+    连接至 `/ws/{room_name}/{player_id}`，发送 JSON 动作消息，
+    并接收 JSON 游戏状态更新。
+
+servers:
+  本地开发:
+    url: 'localhost:8000'
+    protocol: ws
+    description: 本地开发服务器
+
+channels:
+  /ws/{room_name}/{player_id}:
+    description: |
+      主游戏频道，每位玩家在每个房间持有一条连接。
+
+      **连接生命周期：**
+      - 第一位玩家连接时创建房间（游戏进入 WAITING 状态）。
+      - 第二位玩家连接后触发 RUNNING 状态。
+      - RUNNING 状态下断线，游戏进入 RECONNECT 状态；以相同 player_id 重新加入同一房间可恢复对局。
+      - 房间内所有玩家离开后，房间自动销毁。
+
+      **WebSocket 关闭码：**
+      | 关闭码 | 原因 |
+      |--------|------|
+      | 1003 | `room_full` — 房间已有 2 名玩家 |
+      | 1003 | `duplicate_id` — 该 player_id 已在房间内使用 |
+    parameters:
+      room_name:
+        description: 房间标识（最长 20 字符）
+        schema:
+          type: string
+          maxLength: 20
+          example: 'room1'
+      player_id:
+        description: 玩家标识，在同一房间内唯一（最长 20 字符）
+        schema:
+          type: string
+          maxLength: 20
+          example: 'alice'
+
+    # 客户端 → 服务端
+    publish:
+      summary: 玩家动作
+      operationId: sendAction
+      message:
+        $ref: '#/components/messages/ClientAction'
+
+    # 服务端 → 客户端
+    subscribe:
+      summary: 服务端事件
+      operationId: receiveEvent
+      message:
+        oneOf:
+          - $ref: '#/components/messages/BroadcastMessage'
+          - $ref: '#/components/messages/GameStateUpdate'
+
+components:
+  messages:
+
+    ClientAction:
+      name: ClientAction
+      title: 客户端动作
+      summary: 玩家发送的 JSON 消息，用于执行游戏操作。
+      payload:
+        $ref: '#/components/schemas/ClientActionPayload'
+
+    BroadcastMessage:
+      name: BroadcastMessage
+      title: 广播消息
+      summary: 发送给房间内所有玩家的通知消息（如加入/离开事件）。
+      payload:
+        $ref: '#/components/schemas/BroadcastPayload'
+
+    GameStateUpdate:
+      name: GameStateUpdate
+      title: 游戏状态更新
+      summary: |
+        每次动作后发送给特定玩家的私有游戏状态快照。
+        仅包含与当前动作相关的字段，并非每次更新都包含所有字段。
+      payload:
+        $ref: '#/components/schemas/GameStateUpdatePayload'
+
+  schemas:
+
+    # ── 客户端 → 服务端 ────────────────────────────────────────────────────────
+
+    ClientActionPayload:
+      type: object
+      required:
+        - action
+        - card_idx
+      properties:
+        action:
+          $ref: '#/components/schemas/ActionType'
+        card_idx:
+          type: string
+          description: |
+            手牌中牌的数字字符串索引，不需要指定牌时传空字符串。
+            在 `start`/`start_new` 中，值大于 100 时启用调试模式（预设牌山）。
+          example: '3'
+
+    ActionType:
+      type: string
+      description: |
+        所有支持的玩家动作。各动作有游戏阶段和回合限制
+        （详见频道说明及 README 中的状态机说明）。
+
+        | 动作        | 阶段          | 操作方   | 说明 |
+        |-------------|---------------|---------|------|
+        | start       | WAITING       | 任意     | 分配庄家，发牌 |
+        | start_new   | WAITING/ENDED | 任意     | 随机庄家，重置状态 |
+        | draw        | BEFORE_DRAW   | 当前玩家 | 庄家第一巡跳过摸牌 |
+        | discard     | AFTER_DRAW    | 当前玩家 | `card_idx` = 手牌索引 |
+        | riichi      | AFTER_DRAW    | 当前玩家 | `card_idx` = 打出牌的索引 |
+        | kan         | AFTER_DRAW    | 当前玩家 | `card_idx` = 杠的牌索引，自动从岭上摸牌 |
+        | tsumo       | AFTER_DRAW    | 当前玩家 | 自摸和牌 |
+        | ron         | AFTER_DISCARD | 对手     | 荣和对手打出的牌 |
+        | skip_ron    | AFTER_DISCARD | 对手     | 放弃荣和机会 |
+      enum:
+        - start
+        - start_new
+        - draw
+        - discard
+        - riichi
+        - kan
+        - tsumo
+        - ron
+        - skip_ron
+
+    # ── 服务端 → 客户端 ────────────────────────────────────────────────────────
+
+    BroadcastPayload:
+      type: object
+      required:
+        - broadcast
+        - message
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+          description: 广播消息固定为 `true`。
+        message:
+          type: string
+          description: 人类可读的事件描述。
+          example: 'alice 加入 room1。游戏开始！'
+
+    GameStateUpdatePayload:
+      type: object
+      required:
+        - broadcast
+        - player_id
+        - action
+        - message
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
+          description: 定向更新固定为 `false`。
+        player_id:
+          type: string
+          description: 本条消息的目标玩家。
+        action:
+          $ref: '#/components/schemas/ActionType'
+        message:
+          type: string
+          description: |
+            成功时为 `"ok"`，失败时为错误码。
+          oneOf:
+            - type: string
+              enum: ['ok']
+            - $ref: '#/components/schemas/ErrorCode'
+        card_idx:
+          type: integer
+          description: 本次动作涉及的牌的索引。
+        card:
+          type: string
+          description: 本次动作涉及的牌（如 "5s"）。
+          example: '5s'
+        hand:
+          type: array
+          description: 动作后接收方玩家的完整手牌。
+          items:
+            type: string
+          example: ['1s', '2s', '3s', '4s', '5s']
+        is_oya:
+          type: boolean
+          description: 接收方玩家是否为庄家。
+        current_player:
+          type: string
+          description: 当前回合玩家的 ID。
+        turn_stage:
+          type: string
+          description: 当前回合阶段。
+          enum:
+            - before_draw
+            - after_draw
+            - after_discard
+        wall_count:
+          type: integer
+          description: 牌山剩余牌数。
+        kyoutaku_number:
+          type: integer
+          description: 桌上供托立直棒数。
+        fuuro:
+          type: object
+          description: 各玩家的副露（杠）牌组，以 player_id 为键。
+          additionalProperties:
+            type: array
+            items:
+              type: array
+              items:
+                type: string
+          example:
+            alice: [['1s', '1s', '1s', '1s']]
+            bob: []
+        kawa:
+          type: object
+          description: |
+            各玩家的牌河，以 player_id 为键。
+            每条记录格式为 `[牌, 是否为立直打出]`。
+          additionalProperties:
+            type: array
+            items:
+              type: array
+              prefixItems:
+                - type: string
+                - type: boolean
+          example:
+            alice: [['5s', false], ['3s', true]]
+            bob: [['7s', false]]
+        point:
+          type: object
+          description: 各玩家当前点数，以 player_id 为键。
+          additionalProperties:
+            type: integer
+          example:
+            alice: 150000
+            bob: 150000
+        # 和牌结果字段 — 仅在 agari 为 true 时出现
+        agari:
+          type: boolean
+          description: 声明和牌时出现且值为 `true`。
+        han:
+          type: integer
+          description: 和牌的翻数。
+        fu:
+          type: integer
+          description: 和牌的符数。
+        yaku:
+          type: array
+          description: 达成的役种列表。
+          items:
+            type: string
+          example: ['Chinitsu', 'Riichi']
+
+    ErrorCode:
+      type: string
+      description: |
+        动作非法时在 `message` 字段中返回的错误码。
+
+        | 错误码               | 原因 |
+        |----------------------|------|
+        | not_your_turn        | 在非自己回合执行了动作 |
+        | not_opponent_turn    | 在自己回合执行了 ron/skip_ron |
+        | card_index_error     | 牌索引无效或超出范围 |
+        | illegal_draw         | 摸牌阶段错误，或庄家第一巡尝试摸牌 |
+        | illegal_kan          | 杠阶段错误或牌数不足 |
+        | illegal_discard      | 打牌阶段错误 |
+        | illegal_riichi       | 立直阶段错误或已立直 |
+        | illegal_tsumo        | 自摸阶段错误 |
+        | illegal_ron          | 荣和阶段错误 |
+        | room_full            | 房间已满（同时以 WS 关闭码 1003 发送） |
+        | duplicate_id         | player_id 已被占用（同时以 WS 关闭码 1003 发送） |
+        | not_enough_players   | 玩家不足，无法开始游戏 |
+      enum:
+        - not_your_turn
+        - not_opponent_turn
+        - card_index_error
+        - illegal_draw
+        - illegal_kan
+        - illegal_discard
+        - illegal_riichi
+        - illegal_tsumo
+        - illegal_ron
+        - room_full
+        - duplicate_id
+        - not_enough_players

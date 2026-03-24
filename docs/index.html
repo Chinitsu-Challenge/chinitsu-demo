@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>清一色对战 — API 文档</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/@asyncapi/react-component@1.0.0-next.54/styles/default.min.css"
+    />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; }
+      #lang-switcher {
+        position: fixed;
+        top: 12px;
+        right: 16px;
+        z-index: 9999;
+        display: flex;
+        gap: 4px;
+      }
+      #lang-switcher button {
+        padding: 4px 10px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #fff;
+        cursor: pointer;
+        font-size: 13px;
+      }
+      #lang-switcher button.active {
+        background: #1a1a2e;
+        color: #fff;
+        border-color: #1a1a2e;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="lang-switcher">
+      <button id="btn-zh" class="active" onclick="loadSpec('zh')">中文</button>
+      <button id="btn-en" onclick="loadSpec('en')">EN</button>
+    </div>
+    <div id="root"></div>
+
+    <script src="https://unpkg.com/@asyncapi/react-component@1.0.0-next.54/browser/standalone/index.js"></script>
+    <script>
+      const SPECS = {
+        zh: "/api-docs/asyncapi.zh.yaml",
+        en: "/api-docs/asyncapi.yaml",
+      };
+
+      function loadSpec(lang) {
+        document.getElementById("btn-zh").classList.toggle("active", lang === "zh");
+        document.getElementById("btn-en").classList.toggle("active", lang === "en");
+        document.title = lang === "zh" ? "清一色对战 — API 文档" : "Chinitsu Showdown — API Docs";
+
+        AsyncApiStandalone.render(
+          {
+            schema: {
+              url: SPECS[lang],
+              options: { method: "GET", mode: "cors" },
+            },
+            config: {
+              show: {
+                sidebar: true,
+                info: true,
+                servers: true,
+                operations: true,
+                messages: true,
+                schemas: true,
+                errors: true,
+              },
+            },
+          },
+          document.getElementById("root")
+        );
+      }
+
+      // Default to Chinese
+      loadSpec("zh");
+    </script>
+  </body>
+</html>

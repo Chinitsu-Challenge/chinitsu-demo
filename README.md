@@ -62,6 +62,10 @@ uv run python server/start_server.py
 
 服务默认运行在 `0.0.0.0:8000`。
 
+### 查看 API 文档
+
+服务启动后，浏览器打开 `http://127.0.0.1:8000/api-docs`（默认中文，右上角可切换英文）。
+
 ### 开始游戏
 
 1. 浏览器打开 `http://127.0.0.1:8000/`
@@ -501,3 +505,24 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
 
 支持的 debug code 在 `debug_setting.py` 中定义。
+
+---
+
+## 贡献指南
+
+### 修改 API 后请同步更新文档
+
+新增或修改 WebSocket 动作、消息载荷、错误码，或新增 HTTP 接口时，**必须**同步更新以下两个文件：
+
+- `docs/asyncapi.yaml` — 英文规范
+- `docs/asyncapi.zh.yaml` — 中文规范
+
+**使用 AI 辅助开发时**，请在提示词中明确告知 AI 需要同步更新文档，例如：
+
+> 修改完代码后，请同步更新 `docs/asyncapi.yaml` 和 `docs/asyncapi.zh.yaml`。
+> 如新增动作，在 `components/schemas/ActionType/enum` 中添加；
+> 如变更载荷字段，在 `components/schemas/GameStateUpdatePayload` 中更新；
+> 如新增错误码，在 `components/schemas/ErrorCode/enum` 中添加。
+> 两个文件内容需保持一致，仅语言不同。
+
+详细的字段对应关系见 `server/chinitsu_server/CLAUDE.md`。

@@ -1,0 +1,313 @@
+asyncapi: '2.6.0'
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Chinitsu Showdown — AsyncAPI Spec
+#
+# HOW TO MAINTAIN THIS FILE
+# ──────────────────────────────────────────────────────────────────────────────
+# • This is the single source of truth for the WebSocket (and future HTTP) API.
+# • When adding a new WebSocket action:
+#     1. Add the action name to components/schemas/ActionType/enum
+#     2. Add a message entry under components/messages/ if the payload differs
+#     3. Reference it in the channel's publish/subscribe oneOf list
+# • When adding HTTP endpoints, add them as new channels with the http binding.
+# • Validate this file online at https://studio.asyncapi.com (paste YAML there)
+#   or run: npx @asyncapi/cli validate docs/asyncapi.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+
+info:
+  title: Chinitsu Showdown API
+  version: '1.0.0'
+  description: |
+    Two-player real-time Chinitsu (all-one-suit) mahjong game.
+
+    All game communication happens over a single WebSocket connection per player.
+    Connect to `/ws/{room_name}/{player_id}`, send JSON action messages, and
+    receive JSON game-state updates in return.
+
+servers:
+  local:
+    url: 'localhost:8000'
+    protocol: ws
+    description: Local development server
+
+channels:
+  /ws/{room_name}/{player_id}:
+    description: |
+      Main game channel. One connection per player per room.
+
+      **Connection lifecycle:**
+      - First player to connect creates the room (game enters WAITING state).
+      - Second player connecting triggers RUNNING state.
+      - On disconnect during RUNNING, game enters RECONNECT state; rejoining
+        the same room with the same player_id resumes play.
+      - If a room becomes empty, it is destroyed.
+
+      **WebSocket close codes:**
+      | Code | Reason |
+      |------|--------|
+      | 1003 | `room_full` — room already has 2 players |
+      | 1003 | `duplicate_id` — player_id already in use in this room |
+    parameters:
+      room_name:
+        description: Room identifier (max 20 characters)
+        schema:
+          type: string
+          maxLength: 20
+          example: 'room1'
+      player_id:
+        description: Player identifier, unique within a room (max 20 characters)
+        schema:
+          type: string
+          maxLength: 20
+          example: 'alice'
+
+    # Messages the CLIENT sends to the SERVER
+    publish:
+      summary: Player action
+      operationId: sendAction
+      message:
+        $ref: '#/components/messages/ClientAction'
+
+    # Messages the SERVER sends to the CLIENT
+    subscribe:
+      summary: Server event
+      operationId: receiveEvent
+      message:
+        oneOf:
+          - $ref: '#/components/messages/BroadcastMessage'
+          - $ref: '#/components/messages/GameStateUpdate'
+
+components:
+  messages:
+
+    ClientAction:
+      name: ClientAction
+      title: Client Action
+      summary: JSON message sent by a player to perform a game action.
+      payload:
+        $ref: '#/components/schemas/ClientActionPayload'
+
+    BroadcastMessage:
+      name: BroadcastMessage
+      title: Broadcast Message
+      summary: Informational text sent to every player in the room (e.g. join/leave events).
+      payload:
+        $ref: '#/components/schemas/BroadcastPayload'
+
+    GameStateUpdate:
+      name: GameStateUpdate
+      title: Game State Update
+      summary: |
+        Private game-state snapshot sent to a specific player after each action.
+        Contains the fields relevant to that action; not all fields are present
+        in every update.
+      payload:
+        $ref: '#/components/schemas/GameStateUpdatePayload'
+
+  schemas:
+
+    # ── Client → Server ────────────────────────────────────────────────────────
+
+    ClientActionPayload:
+      type: object
+      required:
+        - action
+        - card_idx
+      properties:
+        action:
+          $ref: '#/components/schemas/ActionType'
+        card_idx:
+          type: string
+          description: |
+            Numeric string index into the player's hand, or empty string when
+            no card is needed. For `start`/`start_new`, a value > 100 activates
+            debug mode with a preset wall.
+          example: '3'
+
+    ActionType:
+      type: string
+      description: |
+        All supported player actions. Game phase and turn restrictions apply
+        (see channel description and README for state-machine details).
+
+        | Action      | Phase         | Who          | Notes |
+        |-------------|---------------|--------------|-------|
+        | start       | WAITING       | any          | Assigns dealer; deals hands |
+        | start_new   | WAITING/ENDED | any          | Random dealer; resets state |
+        | draw        | BEFORE_DRAW   | current      | Dealer skips first draw |
+        | discard     | AFTER_DRAW    | current      | `card_idx` = hand index |
+        | riichi      | AFTER_DRAW    | current      | `card_idx` = discard index |
+        | kan         | AFTER_DRAW    | current      | `card_idx` = tile to kan; draws from rinshan |
+        | tsumo       | AFTER_DRAW    | current      | Self-draw win |
+        | ron         | AFTER_DISCARD | opponent     | Win on opponent's discard |
+        | skip_ron    | AFTER_DISCARD | opponent     | Pass on ron opportunity |
+      enum:
+        - start
+        - start_new
+        - draw
+        - discard
+        - riichi
+        - kan
+        - tsumo
+        - ron
+        - skip_ron
+
+    # ── Server → Client ────────────────────────────────────────────────────────
+
+    BroadcastPayload:
+      type: object
+      required:
+        - broadcast
+        - message
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+          description: Always `true` for broadcast messages.
+        message:
+          type: string
+          description: Human-readable event description.
+          example: 'alice joins room1. Game START!'
+
+    GameStateUpdatePayload:
+      type: object
+      required:
+        - broadcast
+        - player_id
+        - action
+        - message
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
+          description: Always `false` for targeted updates.
+        player_id:
+          type: string
+          description: The player this message is addressed to.
+        action:
+          $ref: '#/components/schemas/ActionType'
+        message:
+          type: string
+          description: |
+            `"ok"` on success, or an error code on failure.
+          oneOf:
+            - type: string
+              enum: ['ok']
+            - $ref: '#/components/schemas/ErrorCode'
+        card_idx:
+          type: integer
+          description: Index of the card involved in the action.
+        card:
+          type: string
+          description: Tile identifier involved in the action (e.g. "5s").
+          example: '5s'
+        hand:
+          type: array
+          description: The receiving player's full hand after the action.
+          items:
+            type: string
+          example: ['1s', '2s', '3s', '4s', '5s']
+        is_oya:
+          type: boolean
+          description: Whether the receiving player is the dealer.
+        current_player:
+          type: string
+          description: Player ID whose turn it is.
+        turn_stage:
+          type: string
+          description: Current phase of the turn.
+          enum:
+            - before_draw
+            - after_draw
+            - after_discard
+        wall_count:
+          type: integer
+          description: Tiles remaining in the wall.
+        kyoutaku_number:
+          type: integer
+          description: Riichi sticks on the table (kyoutaku).
+        fuuro:
+          type: object
+          description: Each player's declared kan sets, keyed by player_id.
+          additionalProperties:
+            type: array
+            items:
+              type: array
+              items:
+                type: string
+          example:
+            alice: [['1s', '1s', '1s', '1s']]
+            bob: []
+        kawa:
+          type: object
+          description: |
+            Each player's discard pile, keyed by player_id.
+            Each entry is `[tile, is_riichi_discard]`.
+          additionalProperties:
+            type: array
+            items:
+              type: array
+              prefixItems:
+                - type: string
+                - type: boolean
+          example:
+            alice: [['5s', false], ['3s', true]]
+            bob: [['7s', false]]
+        point:
+          type: object
+          description: Current scores, keyed by player_id.
+          additionalProperties:
+            type: integer
+          example:
+            alice: 150000
+            bob: 150000
+        # Win result fields — only present when agari is true
+        agari:
+          type: boolean
+          description: Present and `true` when a winning hand was declared.
+        han:
+          type: integer
+          description: Han count of the winning hand.
+        fu:
+          type: integer
+          description: Fu count of the winning hand.
+        yaku:
+          type: array
+          description: Yaku (winning conditions) achieved.
+          items:
+            type: string
+          example: ['Chinitsu', 'Riichi']
+
+    ErrorCode:
+      type: string
+      description: |
+        Returned in the `message` field when an action is invalid.
+
+        | Code                 | Cause |
+        |----------------------|-------|
+        | not_your_turn        | Action attempted outside your turn |
+        | not_opponent_turn    | ron/skip_ron attempted on your own turn |
+        | card_index_error     | Invalid or out-of-range card index |
+        | illegal_draw         | Draw attempted in wrong phase or by dealer on first turn |
+        | illegal_kan          | Kan attempted in wrong phase or insufficient tiles |
+        | illegal_discard      | Discard attempted in wrong phase |
+        | illegal_riichi       | Riichi attempted in wrong phase or already in riichi |
+        | illegal_tsumo        | Tsumo attempted in wrong phase |
+        | illegal_ron          | Ron attempted in wrong phase |
+        | room_full            | Room already has 2 players (also sent as WS close code 1003) |
+        | duplicate_id         | player_id already taken in this room (also WS close 1003) |
+        | not_enough_players   | Start attempted with fewer than 2 players |
+      enum:
+        - not_your_turn
+        - not_opponent_turn
+        - card_index_error
+        - illegal_draw
+        - illegal_kan
+        - illegal_discard
+        - illegal_riichi
+        - illegal_tsumo
+        - illegal_ron
+        - room_full
+        - duplicate_id
+        - not_enough_players

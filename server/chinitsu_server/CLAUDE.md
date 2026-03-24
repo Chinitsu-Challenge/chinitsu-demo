@@ -46,4 +46,34 @@ Clients send JSON messages with an `action` field. The server responds with game
 ### Dependencies
 
 - `fastapi`, `uvicorn` — server
-- `python-mahjong` — hand evaluation (no `requirements.txt`; install manually)
+- `python-mahjong` — hand evaluation
+- Dependencies are managed via `uv` — run `uv sync` from the project root
+
+## API Documentation
+
+AsyncAPI specs live at `docs/` in the project root:
+
+| File                    | Purpose                        |
+| ----------------------- | ------------------------------ |
+| `docs/asyncapi.yaml`    | English spec                   |
+| `docs/asyncapi.zh.yaml` | Chinese spec                   |
+| `docs/index.html`       | Viewer served at `/api-docs`   |
+
+**When to update the specs:**
+
+Whenever you make any of the following changes, update **both** `asyncapi.yaml` and `asyncapi.zh.yaml`:
+
+- Adding or removing a WebSocket action → update `components/schemas/ActionType/enum`
+- Changing a message payload (new field, removed field, type change) → update the relevant schema under `components/schemas/`
+- Adding a new message type → add it under `components/messages/` and reference it in the channel's `publish` or `subscribe` oneOf
+- Adding an HTTP endpoint → add it as a new channel with the `http` binding
+- Changing error codes → update `components/schemas/ErrorCode/enum`
+
+**Validate the spec** (requires Node.js):
+
+```bash
+npx @asyncapi/cli validate docs/asyncapi.yaml
+npx @asyncapi/cli validate docs/asyncapi.zh.yaml
+```
+
+Or paste the YAML into [AsyncAPI Studio](https://studio.asyncapi.com) for a live preview.

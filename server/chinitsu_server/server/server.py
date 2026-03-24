@@ -2,6 +2,7 @@
 import logging
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from typing import List, Dict
 from game import ChinitsuGame
@@ -72,6 +73,7 @@ class ConnectionManager:
             else:
                 cur_game.add_player(player_id)
                 cur_game.set_running()
+                logger.info(f"Game started in room {room_name}!")
                 await self.broadcast(f"{player_id} joins {room_name}. Game START!", room_name)
 
 
@@ -178,6 +180,13 @@ async def websocket_endpoint(websocket: WebSocket, room_name: str, player_id: st
         manager.disconnect(websocket, room_name, player_id)
         await manager.broadcast(f"{player_id} left the room {room_name}", room_name)
 
+
+# API docs (AsyncAPI spec + viewer) — must come before the root mount
+@app.get("/api-docs")
+async def redirect_api_docs():
+    return RedirectResponse(url="/api-docs/")
+
+app.mount("/api-docs", StaticFiles(directory=_PROJECT_DIR / "docs", html=True), name="api-docs")
 
 # Web frontend (must be last — catches all remaining paths)
 app.mount("/", StaticFiles(directory=_PROJECT_DIR / "web", html=True), name="web")
