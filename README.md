@@ -27,7 +27,7 @@
 ### 安装依赖
 
 ```bash
-pip install fastapi uvicorn python-mahjong
+pip install fastapi uvicorn mahjong
 ```
 
 ### 下载牌面素材
