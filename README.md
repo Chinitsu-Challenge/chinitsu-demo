@@ -24,17 +24,31 @@
 
 ## 快速开始
 
+### 安装 uv（如尚未安装）
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+更多安装方式参见 [uv 官方文档](https://docs.astral.sh/uv/getting-started/installation/)。
+
 ### 安装依赖
 
 ```bash
-pip install fastapi uvicorn mahjong
+uv sync
 ```
+
+此命令会自动创建虚拟环境并安装 `pyproject.toml` 中声明的所有依赖。
 
 ### 下载牌面素材
 
 ```bash
 cd server/chinitsu_server
-python scripts/get_images.py
+uv run python scripts/get_images.py
 ```
 
 从 `tenhou.net` 下载 44 张牌面 PNG 图片到 `assets/` 目录。
@@ -43,7 +57,7 @@ python scripts/get_images.py
 
 ```bash
 cd server/chinitsu_server
-python server/start_server.py
+uv run python server/start_server.py
 ```
 
 服务默认运行在 `0.0.0.0:8000`。
