@@ -242,11 +242,11 @@ html, body {
 
 .hand-row .tile { margin: 0 -2px; }
 
-.my-hand-row .tile {
+.my-hand-row .tile.clickable {
   cursor: pointer;
 }
 
-.my-hand-row .tile:hover {
+.my-hand-row .tile.clickable:hover {
   transform: translateY(-8px);
   filter: brightness(1.15);
 }

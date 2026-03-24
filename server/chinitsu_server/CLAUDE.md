@@ -17,7 +17,19 @@ Starts a FastAPI/uvicorn server on `127.0.0.1:8000`.
 python scripts/get_images.py
 ```
 
-There is no build step, no linting config, and no configured test runner. `server/test.py` exists but is currently empty.
+**Build frontend (SvelteKit):**
+```bash
+cd web-svelte && npm install && npm run build
+```
+
+**Dev frontend with hot reload:**
+```bash
+cd web-svelte && npm run dev
+```
+
+Vite proxies `/ws` and `/assets` to the FastAPI backend on `:8000`.
+
+`server/test.py` exists but is currently empty.
 
 ## Architecture
 
