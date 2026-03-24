@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chinitsu</title>
+    <h1>Simple web client just for testing</h1>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        var websocket;
+        var playerId = prompt("Enter playerId:");
+        var roomName = prompt("Enter the room name:");
+        if (roomName) {
+          websocket = new WebSocket(
+            `ws://127.0.0.1:8000/ws/${roomName}/${playerId}`
+          );
+
+          websocket.onopen = function (event) {
+            console.log("Connected to WebSocket");
+          };
+
+          websocket.onmessage = function (event) {
+            let messages = document.getElementById("messages");
+            let message = document.createElement("li");
+            message.textContent = event.data;
+            messages.appendChild(message);
+          };
+
+          websocket.onclose = function (event) {
+            console.log("WebSocket closed:", event);
+            // Check if the WebSocket was closed with the code for "room full"
+            if (event.code === 1003) {
+              if (event.reason === "room_full") {
+                alert("The room is full. Please try joining another room or create a new one.");
+              }
+              if (event.reason === "duplicate_id") {
+                alert("Your Game ID is in use by someone else. Please use another one.");
+              }
+              location.reload();
+            }
+          }
+
+        }
+          document.getElementById("sendButton").onclick = function () {
+            let action = document.getElementById("messageText");
+            let card_idx = document.getElementById("card_idx");
+            websocket.send(JSON.stringify({"broadcast": true, "action": action.value, "card_idx": card_idx.value}));
+            action.value = "";
+            card_idx.value = "";
+          };
+
+          document.getElementById("reach").onclick = function () {
+            let action = 'reach';
+            let card_idx = document.getElementById("card_idx");
+            websocket.send(JSON.stringify({"broadcast": true, "action": action, "card_idx": card_idx.value}));
+            action.value = "";
+            card_idx.value = "";
+          };
+
+          document.getElementById("tsumo").onclick = function () {
+            let action = 'tsumo';
+            let card_idx = document.getElementById("card_idx");
+            websocket.send(JSON.stringify({"broadcast": true, "action": action, "card_idx": card_idx.value}));
+            action.value = "";
+            card_idx.value = "";
+          };
+
+          document.getElementById("ron").onclick = function () {
+            let action = 'ron';
+            let card_idx = document.getElementById("card_idx");
+            websocket.send(JSON.stringify({"broadcast": true, "action": action, "card_idx": card_idx.value}));
+            action.value = "";
+            card_idx.value = "";
+          };
+
+          document.getElementById("start").onclick = function () {
+            let action = 'start';
+            let cheat_code = document.getElementById("cheat_code");
+            websocket.send(JSON.stringify({"broadcast": true, "action": action, "card_idx": cheat_code.value}));
+            action.value = "";
+            cheat_code.value = "";
+          };
+        });
+    </script>
+  </head>
+  <body>
+    <ul id="messages"></ul>
+    action
+    <input type="text" id="messageText" />
+    card_idx
+    <input type="text" id="card_idx" />
+    <button id="sendButton">Send</button>
+    <div>
+      <button id="reach">reach</button>
+      <button id="tsumo">tsumo</button>
+      <button id="ron">ron</button>
+    </div>
+    <div>
+      <button id="start">start!</button>
+      <input type="text" id="cheat_code" />
+    </div>
+  </body>
+</html>
