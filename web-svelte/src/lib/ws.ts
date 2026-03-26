@@ -59,14 +59,34 @@ export function connect(
 	myId = playerId;
 
 	return new Promise((resolve) => {
-		const { protocol, hostname, port } = window.location;
-		const wsProto = protocol === 'https:' ? 'wss' : 'ws';
-		ws = new WebSocket(`${wsProto}://${hostname}:${port || '8000'}/ws/${roomName}/${myId}`);
+		let resolved = false;
+		const done = (result: { ok: boolean; reason?: string }) => {
+			if (!resolved) {
+				resolved = true;
+				resolve(result);
+			}
+		};
+
+		// In production, frontend is served by FastAPI on the same origin.
+		// In dev, set VITE_WS_URL to point at the backend (e.g. ws://localhost:8000).
+		const base = import.meta.env.VITE_WS_URL
+			|| `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
+		const url = `${base}/ws/${roomName}/${myId}`;
+		console.log('[ws] connecting to', url);
+		ws = new WebSocket(url);
+
+		const timeout = setTimeout(() => {
+			console.log('[ws] connection timed out');
+			ws?.close();
+			done({ ok: false, reason: 'Connection timed out.' });
+		}, 5000);
 
 		ws.onopen = () => {
+			clearTimeout(timeout);
+			console.log('[ws] connected');
 			gameState.update((s) => ({ ...s, phase: 'waiting' }));
 			logMsg('Connected to room: ' + roomName, 'broadcast');
-			resolve({ ok: true });
+			done({ ok: true });
 		};
 
 		ws.onmessage = ({ data }) => {
@@ -74,6 +94,7 @@ export function connect(
 		};
 
 		ws.onclose = (event) => {
+			clearTimeout(timeout);
 			if (event.code === 1003) {
 				const reason =
 					event.reason === 'room_full'
@@ -81,14 +102,15 @@ export function connect(
 						: event.reason === 'duplicate_id'
 							? 'Name already taken in this room.'
 							: 'Connection refused.';
-				resolve({ ok: false, reason });
+				done({ ok: false, reason });
 			} else {
-				logMsg('Disconnected from server.', 'error');
+				done({ ok: false, reason: 'Disconnected from server.' });
 			}
 		};
 
 		ws.onerror = () => {
-			resolve({ ok: false, reason: 'Connection failed.' });
+			clearTimeout(timeout);
+			done({ ok: false, reason: 'Connection failed.' });
 		};
 	});
 }

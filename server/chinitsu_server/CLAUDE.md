@@ -8,9 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 python server/start_server.py
 ```
-Starts a FastAPI/uvicorn server on `127.0.0.1:8000`.
+Starts a FastAPI/uvicorn server on `0.0.0.0:8000` (all interfaces).
 
-**Test client:** Open `client/index.html` in a browser and connect to `ws://127.0.0.1:8000/ws/{room}/{player_id}`.
+> **VSCode note:** VSCode Helper binds `localhost:8000` and intercepts browser connections even with `remote.autoForwardPorts: false`. Always access via the machine's LAN IP (e.g. `http://10.110.11.x:8000`), not `localhost`.
+
+**Test client:** Open `client/index.html` in a browser and connect to `ws://<LAN-IP>:8000/ws/{room}/{player_id}`.
 
 **Download card assets:**
 ```bash
@@ -27,7 +29,9 @@ cd web-svelte && npm install && npm run build
 cd web-svelte && npm run dev
 ```
 
-Vite proxies `/ws` and `/assets` to the FastAPI backend on `:8000`.
+For hot-reload dev, set `VITE_WS_URL=ws://<LAN-IP>:8000` in `web-svelte/.env.local` so the dev server connects directly to the backend. Do **not** rely on Vite's WebSocket proxy — it is unreliable for this use case.
+
+**Normal workflow (no hot reload needed):** build with `npm run build`, then serve everything through FastAPI at port 8000. `VITE_WS_URL` should be left unset so `ws.ts` derives the WebSocket URL from `window.location.host` at runtime — no IP hardcoding required.
 
 `server/test.py` exists but is currently empty.
 
