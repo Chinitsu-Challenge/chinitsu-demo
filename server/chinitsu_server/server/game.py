@@ -323,14 +323,20 @@ class ChinitsuGame:
                 res = {player_id: {"message": "illegal_draw"}}
                 logger.debug(str(self.state))
                 return res
-            try:
+            if len(self.yama) == 0:
+                # Exhaustive draw — ryukyoku
+                tenpai_info = {}
+                for name, pl in self._players.items():
+                    tiles = get_tenpai_tiles(pl.hand, pl.num_fuuro)
+                    tenpai_info[name] = {"is_tenpai": bool(tiles), "hand": pl.hand if tiles else []}
+                public_info["ryukyoku"] = True
+                public_info["tenpai"] = tenpai_info
+                res = {player_id: {"message": "ok"}}
+            else:
                 cards = self.draw_from_yama(player_id)
                 public_info["card_idx"] = p.len_hand
                 res = {player_id: {"hand": p.hand}}
                 self.state.next()
-            except ValueError as e:
-                res = {player_id: {"message": f"card_index_out_of_range. {e}"}}
-                return res
 
 
         if action == "kan":

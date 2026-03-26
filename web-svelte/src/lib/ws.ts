@@ -249,6 +249,19 @@ function handleMessage(data: Record<string, unknown>) {
 			});
 		}
 
+		// Ryukyoku (exhaustive draw)
+		if (data.ryukyoku) {
+			s.phase = 'ended';
+			agariResult.set({
+				agari: false,
+				action: 'ryukyoku',
+				player_id: actorId,
+				point: 0,
+				tenpai: data.tenpai as Record<string, { is_tenpai: boolean; hand: string[] }>,
+				isMe: false
+			});
+		}
+
 		return { ...s };
 	});
 }
