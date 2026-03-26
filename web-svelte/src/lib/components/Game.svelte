@@ -15,6 +15,7 @@
 
 	let turnLabel = $derived.by(() => {
 		if (s.phase === 'waiting') return 'Waiting for opponent...';
+		if (s.phase === 'waiting_new_game') return 'Waiting for opponent to start...';
 		if (s.phase === 'ended') return 'Round ended';
 		if (s.phase !== 'playing') return '';
 		if (!isMyTurn) return "Opponent's turn...";
@@ -116,8 +117,12 @@
 			{/if}
 		</div>
 		<div class="action-buttons">
-			{#if s.phase === 'waiting' || s.phase === 'ended'}
+			{#if s.phase === 'waiting'}
 				<button class="btn btn-action" onclick={() => sendAction('start')}>Start Game</button>
+			{:else if s.phase === 'ended'}
+				<button class="btn btn-action" onclick={() => sendAction('start_new')}>New Game</button>
+			{:else if s.phase === 'waiting_new_game'}
+				<span class="waiting-label">Waiting for opponent...</span>
 			{/if}
 			{#if s.phase === 'playing'}
 				{#if isMyTurn && s.turnStage === 'before_draw'}

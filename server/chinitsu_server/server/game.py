@@ -135,6 +135,8 @@ class ChinitsuGame:
 
         self.kyoutaku_number = 0
         self.tsumi_number = 0
+        self.next_oya = None   # set after each round; None = randomize
+        self._ready = set()    # tracks which players clicked start_new
         self.set_rules(rules)
 
     def set_rules(self, rules: dict):
@@ -194,9 +196,12 @@ class ChinitsuGame:
         return self._players[self.player_ids[1 - self.player_ids.index(player_name)]]
 
     def start_new_game(self, debug_code=None):
-        # randomly set oyabann (dealer)
-        idx = random.randint(0, 1)
-        oya = self.player_ids[idx]
+        # use saved next_oya if available, otherwise randomize
+        if self.next_oya and self.next_oya in self.player_ids:
+            oya = self.next_oya
+        else:
+            idx = random.randint(0, 1)
+            oya = self.player_ids[idx]
         self.start_game(oya, debug_code)
 
     def start_game(self, oya: str, debug_code=None):
@@ -278,20 +283,23 @@ class ChinitsuGame:
             if debug_code:
                 logger.warning('Debug code: %s', debug_code)
 
-            is_new_game = (action == "start_new")
-            if len(self._players) == 2:
-                self.start_new_game(debug_code=debug_code)
-                self.state.next() # oya does not need to draw, set to after_draw
-                res = {player_id: {"message": "ok"}}
-                for name, p in self._players.items():
-                    if name not in res:
-                        res[name] = {}
-                    res[name]["hand"] = p.hand
-                    res[name]["is_oya"] = p.is_oya
+            if len(self._players) != 2:
+                return {player_id: {"message": "not_enough_players"}}
 
-            else:
-                res = {player_id: {"message": "not_enough_players"}}
-                return res
+            # both players must signal ready before the round starts
+            self._ready.add(player_id)
+            if len(self._ready) < 2:
+                return {player_id: {"action": action, "message": "waiting_for_opponent"}}
+            self._ready.clear()
+
+            self.start_new_game(debug_code=debug_code)
+            self.state.next()  # oya does not need to draw, set to after_draw
+            res = {player_id: {"message": "ok"}}
+            for name, p in self._players.items():
+                if name not in res:
+                    res[name] = {}
+                res[name]["hand"] = p.hand
+                res[name]["is_oya"] = p.is_oya
 
 
 
@@ -390,23 +398,39 @@ class ChinitsuGame:
             is_agari = (agari.han is not None and agari.han > 0)
             res = {player_id: {"message": "ok"}}
             if is_agari:
+                win_amount = agari.cost['main']
+                # winner gains points (including kyoutaku sticks), loser pays base cost
+                p.point += win_amount + self.kyoutaku_number * 1000
+                opp.point -= win_amount
+                self.kyoutaku_number = 0
+                # winner is next oya
+                self.next_oya = player_id
+                p.is_oya = True
+                opp.is_oya = False
                 public_info.update({
                     "agari": True,
                     "han": agari.han,
                     "fu": agari.fu,
-                    "point": agari.cost['main'],
+                    "point": win_amount,
                     "yaku": [str(y) for y in agari.yaku]
                 })
-                self.player(player_id).is_oya = True
-                self.other_player(player_id).is_oya = False
             else:
+                punishment = self.rules['no_agari_punishment']
+                # false winner pays, opponent receives
+                p.point -= punishment
+                opp.point += punishment
+                # opponent becomes next oya
+                self.next_oya = opp.name
+                opp.is_oya = True
+                p.is_oya = False
                 public_info.update({
                     "agari": False,
                     "han": 0,
                     "fu": 0,
-                    "point": -self.rules['no_agari_punishment'],
+                    "point": -punishment,
                     "yaku": None
                 })
+            self.set_ended()
             return res
 
         if action == "tsumo":
@@ -485,9 +509,8 @@ class ChinitsuGame:
             res = {player_id: {"message": "ok"}}
             self.state.next()
 
-        # add public info to result
-        # if res is None:
-        #     return {player_id: {"message": f"unknown_action: {action}"}}
+        # add current point balances and public info to result
+        public_info["balances"] = {name: pl.point for name, pl in self._players.items()}
         for p_id in self.player_ids:
             if p_id not in res:
                 res[p_id] = {}

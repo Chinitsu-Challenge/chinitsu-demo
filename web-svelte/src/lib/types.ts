@@ -4,7 +4,7 @@ export interface KawaEntry {
 }
 
 export interface GameState {
-	phase: 'lobby' | 'waiting' | 'playing' | 'ended';
+	phase: 'lobby' | 'waiting' | 'playing' | 'ended' | 'waiting_new_game';
 	myHand: string[];
 	myIsOya: boolean;
 	myPoints: number;

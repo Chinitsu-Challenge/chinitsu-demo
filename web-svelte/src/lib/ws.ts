@@ -1,4 +1,4 @@
-import { writable, get } from 'svelte/store';
+import { writable } from 'svelte/store';
 import type { GameState, AgariData, KawaEntry } from './types';
 import { getToken, getUuid, getUsername } from './auth';
 
@@ -69,16 +69,34 @@ export function connect(
 	const token = getToken();
 
 	return new Promise((resolve) => {
-		const { protocol, hostname, port } = window.location;
-		const wsProto = protocol === 'https:' ? 'wss' : 'ws';
-		ws = new WebSocket(
-			`${wsProto}://${hostname}:${port || '8000'}/ws/${roomName}?token=${encodeURIComponent(token)}`
-		);
+		let resolved = false;
+		const done = (result: { ok: boolean; reason?: string }) => {
+			if (!resolved) {
+				resolved = true;
+				resolve(result);
+			}
+		};
+
+		// In production, frontend is served by FastAPI on the same origin.
+		// In dev, set VITE_WS_URL to point at the backend (e.g. ws://localhost:8000).
+		const base = import.meta.env.VITE_WS_URL
+			|| `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
+		const url = `${base}/ws/${roomName}?token=${encodeURIComponent(token)}`;
+		console.log('[ws] connecting to', url);
+		ws = new WebSocket(url);
+
+		const timeout = setTimeout(() => {
+			console.log('[ws] connection timed out');
+			ws?.close();
+			done({ ok: false, reason: 'Connection timed out.' });
+		}, 5000);
 
 		ws.onopen = () => {
+			clearTimeout(timeout);
+			console.log('[ws] connected');
 			gameState.update((s) => ({ ...s, phase: 'waiting' }));
 			logMsg('Connected to room: ' + roomName, 'broadcast');
-			resolve({ ok: true });
+			done({ ok: true });
 		};
 
 		ws.onmessage = ({ data }) => {
@@ -86,23 +104,25 @@ export function connect(
 		};
 
 		ws.onclose = (event) => {
+			clearTimeout(timeout);
 			if (event.code === 1008) {
-				resolve({ ok: false, reason: 'Authentication failed. Please login again.' });
+				done({ ok: false, reason: 'Authentication failed. Please login again.' });
 			} else if (event.code === 1003) {
 				const reason =
 					event.reason === 'room_full'
 						? 'Room is full!'
 						: event.reason === 'duplicate_id'
-							? 'Already connected in this room.'
+							? 'Name already taken in this room.'
 							: 'Connection refused.';
-				resolve({ ok: false, reason });
+				done({ ok: false, reason });
 			} else {
-				logMsg('Disconnected from server.', 'error');
+				done({ ok: false, reason: 'Disconnected from server.' });
 			}
 		};
 
 		ws.onerror = () => {
-			resolve({ ok: false, reason: 'Connection failed.' });
+			clearTimeout(timeout);
+			done({ ok: false, reason: 'Connection failed.' });
 		};
 	});
 }
@@ -112,17 +132,16 @@ function handleMessage(data: Record<string, unknown>) {
 	if (data.broadcast) {
 		logMsg(data.message as string, 'broadcast');
 		const msg = data.message as string;
-		// Extract opponent display name from broadcast messages
 		const joinMatch = msg.match(/^(.+) joins/);
 		const hostMatch = msg.match(/Host is (.+)/);
-		if (joinMatch) {
-			const name = joinMatch[1];
-			if (name !== myDisplayName) oppDisplayName = name;
-		}
-		if (hostMatch) {
-			const name = hostMatch[1];
-			if (name !== myDisplayName) oppDisplayName = name;
-		}
+		if (joinMatch && joinMatch[1] !== myDisplayName) oppDisplayName = joinMatch[1];
+		if (hostMatch && hostMatch[1] !== myDisplayName) oppDisplayName = hostMatch[1];
+		return;
+	}
+
+	// Waiting for the other player to also click start
+	if (data.message === 'waiting_for_opponent') {
+		gameState.update((s) => ({ ...s, phase: 'waiting_new_game' }));
 		return;
 	}
 
@@ -159,9 +178,9 @@ function handleMessage(data: Record<string, unknown>) {
 		if (data.hand) s.myHand = data.hand as string[];
 		if (data.is_oya !== undefined) s.myIsOya = data.is_oya as boolean;
 
-		// Update points
-		if (data.point && typeof data.point === 'object') {
-			const pts = data.point as Record<string, number>;
+		// Update point balances
+		if (data.balances && typeof data.balances === 'object') {
+			const pts = data.balances as Record<string, number>;
 			for (const [pid, p] of Object.entries(pts)) {
 				if (pid === myId) s.myPoints = p;
 				else {
