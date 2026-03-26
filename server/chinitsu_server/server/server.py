@@ -189,4 +189,8 @@ async def redirect_api_docs():
 app.mount("/api-docs", StaticFiles(directory=_PROJECT_DIR / "docs", html=True), name="api-docs")
 
 # Web frontend (must be last — catches all remaining paths)
-app.mount("/", StaticFiles(directory=_PROJECT_DIR / "web", html=True), name="web")
+# Prefer Svelte build output; fall back to legacy web/ directory
+_WEB_DIR = _PROJECT_DIR / "web-svelte" / "build"
+if not _WEB_DIR.is_dir():
+    _WEB_DIR = _PROJECT_DIR / "web"
+app.mount("/", StaticFiles(directory=_WEB_DIR, html=True), name="web")

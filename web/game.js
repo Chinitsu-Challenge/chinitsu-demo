@@ -428,9 +428,16 @@ function estimateOppHandSize() {
 
 function renderKawa(el, kawa) {
   el.innerHTML = '';
-  kawa.forEach(({ card, isRiichi }) => {
-    el.appendChild(createTile(card, { riichi: isRiichi }));
-  });
+  for (let i = 0; i < kawa.length; i += 5) {
+    const row = document.createElement('div');
+    row.className = 'kawa-row';
+    kawa.slice(i, i + 5).forEach(({ card, isRiichi }, j) => {
+      const tile = createTile(card, { riichi: isRiichi });
+      if (i + j === kawa.length - 1) tile.classList.add('last-discard');
+      row.appendChild(tile);
+    });
+    el.appendChild(row);
+  }
 }
 
 function renderFuuro(el, fuuro) {
