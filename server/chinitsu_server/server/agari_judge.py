@@ -18,6 +18,19 @@ def print_hand_result(hand_result):
 
 
 calculator = HandCalculator()
+_shanten = Shanten()
+
+def get_tenpai_tiles(hand: List[str], num_fuuro: int = 0) -> List[str]:
+    """Given a 13-tile hand, return the list of tiles that would complete it."""
+    winning = []
+    for num in range(1, 10):
+        test = hand + [f"{num}s"]
+        hand_str = ''.join(sorted([s.strip('s') for s in test]))
+        tiles = TilesConverter.string_to_136_array(sou=hand_str)
+        if _shanten.calculate_shanten(tiles, open_sets_count=num_fuuro) == -1:
+            winning.append(f"{num}s")
+    return winning
+
 
 class AgariJudger():    
     def __init__(self, has_daisharin=False, renhou_as_yakuman=False, ) -> None:

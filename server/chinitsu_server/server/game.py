@@ -1,14 +1,14 @@
 # pylint: disable=missing-function-docstring, missing-module-docstring, missing-class-docstring, line-too-long
 from typing import List, Dict, Tuple
 import random, time, logging
-from agari_judge import AgariJudger, HandResponse
+from agari_judge import AgariJudger, HandResponse, get_tenpai_tiles
 from debug_setting import debug_yama
 logger = logging.getLogger("uvicorn")
 
 WAITING, RUNNING, RECONNECT, ENDED = 0, 1, 2, 3
 default_rules = {
     "initial_point" : 150_000,
-    "no_agari_punishment": 20_000,
+    "no_agari_punishment": 20_000, 
     "sort_hand" : False,
     "yaku_rules": {
         "has_daisharin" : False,
@@ -28,7 +28,8 @@ class ChinitsuPlayer:
         self.riichi_turn = None
         self.is_ippatsu = False
         self.is_rinshan = False
-        self.is_furiten = False
+        self.is_furiten = False       # permanent furiten (riichi + skipped ron)
+        self.is_temp_furiten = False  # temporary furiten (skipped ron, cleared on next discard)
 
         # last card of hand is tsumo card (only after drawing a card)
         self.hand: List[str] = []
@@ -45,6 +46,7 @@ class ChinitsuPlayer:
         self.is_ippatsu = False
         self.is_rinshan = False
         self.is_furiten = False
+        self.is_temp_furiten = False
 
         # last card of hand is tsumo card (only after drawing a card)
         self.hand: List[str] = []
@@ -57,7 +59,7 @@ class ChinitsuPlayer:
         return len(self.hand)
 
     @property
-    def num_fuuro(self):
+    def num_fuuro(self): # 副露の数
         return len(self.fuuro)
 
     def draw(self, cards: List[str], is_rinshan=False):
@@ -75,6 +77,8 @@ class ChinitsuPlayer:
             self.is_ippatsu = True
         else:
             self.is_ippatsu = False
+
+        self.is_temp_furiten = False  # clear same-turn furiten on each discard
 
         return card
 
@@ -447,6 +451,16 @@ class ChinitsuGame:
                 res = {player_id: {"message": f"incorrect_card_count: {p.len_hand} + {p.num_fuuro} fuuros"}}
                 return res
 
+            # Furiten checks — all three types block ron (tsumo is still allowed)
+            if p.is_furiten or p.is_temp_furiten:
+                res = {player_id: {"message": "furiten"}}
+                return res
+            tenpai_tiles = get_tenpai_tiles(p.hand, p.num_fuuro)
+            kawa_cards = {k[0] for k in p.kawa}
+            if any(t in kawa_cards for t in tenpai_tiles):
+                res = {player_id: {"message": "furiten"}}
+                return res
+
             agari_condition = {
                 "is_tsumo" : False,
                 "is_riichi": p.is_riichi,
@@ -479,9 +493,14 @@ class ChinitsuGame:
                 opp.point -= 1000
                 self.kyoutaku_number += 1
 
-            #TODO: set riichi furiten
-            if p.is_riichi:
-                pass
+            # Set furiten if player skipped a tile they could have won on
+            win_card = opp.kawa[-1][0]
+            tenpai_tiles = get_tenpai_tiles(p.hand, p.num_fuuro)
+            if win_card in tenpai_tiles:
+                if p.is_riichi:
+                    p.is_furiten = True       # permanent: riichi furiten
+                else:
+                    p.is_temp_furiten = True  # temporary: same-turn furiten
             res = {player_id: {"message": "ok"}}
             self.state.next()
 
