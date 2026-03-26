@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { gameState, sendAction, getMyId, getOppId } from '$lib/ws';
+	import { gameState, sendAction, getMyId, getOppId, getMyDisplayName, getOppDisplayName } from '$lib/ws';
 	import Hand from './Hand.svelte';
 	import OpponentHand from './OpponentHand.svelte';
 	import Kawa from './Kawa.svelte';
@@ -62,7 +62,7 @@
 <div id="game" class="screen">
 	<!-- Opponent bar -->
 	<div class="player-bar opponent-bar">
-		<span class="player-name">{oppId || '???'}</span>
+		<span class="player-name">{getOppDisplayName() || '???'}</span>
 		<span class="player-points">{s.oppPoints.toLocaleString()}</span>
 		{#if s.phase === 'playing' && !s.myIsOya}
 			<span class="badge">親</span>
@@ -106,7 +106,7 @@
 	<!-- My bar -->
 	<div class="player-bar my-bar">
 		<div class="my-info">
-			<span class="player-name">{myId}</span>
+			<span class="player-name">{getMyDisplayName()}</span>
 			<span class="player-points">{s.myPoints.toLocaleString()}</span>
 			{#if s.phase === 'playing' && s.myIsOya}
 				<span class="badge">親</span>

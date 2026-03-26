@@ -1,0 +1,126 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Commands
+
+**Install Python dependencies (from project root):**
+```bash
+uv sync
+```
+
+**Start the backend server:**
+```bash
+cd server/chinitsu_server
+uv run python server/start_server.py
+```
+Listens on `0.0.0.0:8000`. API docs at `http://127.0.0.1:8000/api-docs`.
+
+**Download tile image assets (required once before running):**
+```bash
+cd server/chinitsu_server
+uv run python scripts/get_images.py
+```
+
+**Frontend dev server (with hot reload, proxies to backend):**
+```bash
+cd web-svelte
+npm install
+npm run dev
+```
+
+**Frontend production build:**
+```bash
+cd web-svelte
+npm run build
+```
+
+**Frontend type checking:**
+```bash
+cd web-svelte
+npm run check
+```
+
+**Validate AsyncAPI specs:**
+```bash
+npx @asyncapi/cli validate docs/asyncapi.yaml
+npx @asyncapi/cli validate docs/asyncapi.zh.yaml
+```
+
+There are currently no automated tests — `server/chinitsu_server/server/test.py` is empty. Manual testing uses a browser connected to `ws://127.0.0.1:8000/ws/{room}/{player_id}`, or the debug codes described below.
+
+## Architecture
+
+Chinitsu Showdown is a 2-player real-time mahjong game (chinitsu/清一色 variant — bamboo tiles only). The backend is a Python FastAPI app; the frontend is SvelteKit. They communicate exclusively via WebSocket.
+
+### Request Flow
+
+```
+Browser (SvelteKit) ──WebSocket──▶ server.py (ConnectionManager/GameManager)
+                                        │
+                                        ▼
+                                   game.py (ChinitsuGame / ChinitsuPlayer)
+                                        │
+                                        ▼
+                                   agari_judge.py ──▶ python-mahjong lib
+```
+
+### Backend (`server/chinitsu_server/server/`)
+
+- **`server.py`** — FastAPI app, WebSocket endpoint at `/ws/{room_name}/{player_id}`. `GameManager` owns in-memory game rooms; `ConnectionManager` routes messages and handles disconnect/reconnect (game enters `RECONNECT` state when a player drops).
+- **`game.py`** — Core engine. `ChinitsuGame` tracks game state (`WAITING=0`, `RUNNING=1`, `RECONNECT=2`, `ENDED=3`) and turn state (`BEFORE_DRAW=1`, `AFTER_DRAW=2`, `AFTER_DISCARD=3`). `ChinitsuPlayer` holds hand, kawa, fuuro, riichi/ippatsu/furiten flags. The `input(action, card_idx, player_id)` method is the single entry point for all player actions.
+- **`agari_judge.py`** — Wraps `python-mahjong`'s `HandCalculator` to validate winning hands and compute han/fu/points.
+- **`debug_setting.py`** — Predetermined tile distributions for testing. Activated by passing a debug code (`114514`, `1001`) as `card_idx` in a `start`/`start_new` action (value must be > 100).
+- **`start_server.py`** — Configures uvicorn logging and starts the app. Also mounts `/assets` (tile PNGs) and `/` (built SvelteKit frontend) as static routes.
+
+### Frontend (`web-svelte/src/`)
+
+- **`lib/ws.ts`** — WebSocket client wrapper; all server communication goes through here.
+- **`lib/types.ts`** — Shared TypeScript types for game state.
+- **`routes/+page.svelte`** — Single page that switches between lobby and game views.
+- **`lib/components/`** — UI components: `Game`, `Lobby`, `Hand`, `OpponentHand`, `Kawa`, `Fuuro`, `Tile`, `AgariOverlay`, `MessageLog`.
+
+Vite proxies `/ws` → `ws://localhost:8000` and `/assets` → `http://localhost:8000` during development.
+
+### WebSocket Protocol
+
+Client sends: `{"action": "string", "card_idx": "string"}`
+
+Actions: `start`, `start_new`, `draw`, `discard`, `riichi`, `kan`, `tsumo`, `ron`, `skip_ron`
+
+Server responds per-player with full game state (hand, kawa, fuuro, points, turn info). Winning responses include `agari`, `han`, `fu`, `point`, `yaku` fields.
+
+No authentication — player identity is the `player_id` path parameter (max 20 chars). Room capacity is 2 players; connecting to a full room closes with code `1003`.
+
+### Default Game Rules (`game.py`)
+
+```python
+default_rules = {
+    "initial_point": 150_000,
+    "no_agari_punishment": 20_000,
+    "sort_hand": False,
+    "yaku_rules": {
+        "has_daisharin": False,
+        "renhou_as_yakuman": False,
+    }
+}
+```
+
+## API Documentation
+
+AsyncAPI specs live in `docs/`:
+
+| File | Purpose |
+|---|---|
+| `docs/asyncapi.yaml` | English spec |
+| `docs/asyncapi.zh.yaml` | Chinese spec |
+| `docs/index.html` | Viewer served at `/api-docs` |
+
+**Whenever you change the WebSocket protocol, update both spec files:**
+- New/removed action → `components/schemas/ActionType/enum`
+- Changed message payload → `components/schemas/GameStateUpdatePayload`
+- New message type → `components/messages/` + channel `oneOf`
+- New HTTP endpoint → new channel with `http` binding
+- Changed error codes → `components/schemas/ErrorCode/enum`
+
+Both files must stay in sync (same structure, different language only).
