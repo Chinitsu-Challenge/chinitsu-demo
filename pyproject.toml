@@ -10,7 +10,7 @@ dependencies = [
     "mahjong",
     "requests",
     "passlib[bcrypt]",
-    "bcrypt<4",
+    "bcrypt",
     "python-jose[cryptography]",
     "aiosqlite",
 ]

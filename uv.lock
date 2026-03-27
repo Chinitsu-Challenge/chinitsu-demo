@@ -227,7 +227,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite" },
-    { name = "bcrypt", specifier = "<4" },
+    { name = "bcrypt" },
     { name = "fastapi" },
     { name = "httpx", marker = "extra == 'test'" },
     { name = "mahjong" },
