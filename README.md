@@ -36,13 +36,22 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 
 更多安装方式参见 [uv 官方文档](https://docs.astral.sh/uv/getting-started/installation/)。
 
-### 安装依赖
+### 安装后端依赖
 
 ```bash
 uv sync
 ```
 
 此命令会自动创建虚拟环境并安装 `pyproject.toml` 中声明的所有依赖。
+
+### 安装前端依赖
+
+> 需要 Node.js >= 22.12
+
+```bash
+cd web-svelte
+npm install
+```
 
 ### 下载牌面素材
 
@@ -53,7 +62,7 @@ uv run python scripts/get_images.py
 
 从 `tenhou.net` 下载 44 张牌面 PNG 图片到 `assets/` 目录。
 
-### 启动服务
+### 启动后端服务
 
 ```bash
 cd server/chinitsu_server
@@ -62,15 +71,27 @@ uv run python server/start_server.py
 
 服务默认运行在 `0.0.0.0:8000`。
 
+### 启动前端开发服务器（可选）
+
+开发时使用，支持热更新：
+
+```bash
+cd web-svelte
+npm run dev
+```
+
+访问 `http://localhost:5173`。生产环境直接访问后端 `http://127.0.0.1:8000/`（需先执行 `npm run build`）。
+
 ### 查看 API 文档
 
 服务启动后，浏览器打开 `http://127.0.0.1:8000/api-docs`（默认中文，右上角可切换英文）。
 
 ### 开始游戏
 
-1. 浏览器打开 `http://127.0.0.1:8000/`
-2. 输入玩家名和房间名，点击连接
-3. 两名玩家进入同一房间后，点击「开始游戏」
+1. 浏览器打开 `http://localhost:5173`（开发）或 `http://127.0.0.1:8000/`（生产）
+2. 注册账号或登录
+3. 输入房间名，点击连接
+4. 两名玩家进入同一房间后，点击「开始游戏」
 
 ---
 
@@ -259,13 +280,15 @@ uv run python server/start_server.py
 ### 连接地址
 
 ```
-ws://{host}:{port}/ws/{room_name}/{player_id}
+ws://{host}:{port}/ws/{room_name}?token={jwt_token}
 ```
 
-| 参数 | 类型 | 限制 | 说明 |
-|------|------|------|------|
-| `room_name` | string | 最长 20 字符 | 房间标识 |
-| `player_id` | string | 最长 20 字符 | 玩家标识，同一房间内唯一 |
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `room_name` | string | 房间标识 |
+| `token` | string | 登录后获取的 JWT token，玩家身份由 token 中的 UUID 决定 |
+
+连接前需先通过 `POST /api/register` 或 `POST /api/login` 获取 token。
 
 ### 客户端发送消息格式
 
@@ -422,16 +445,17 @@ ws://{host}:{port}/ws/{room_name}/{player_id}
 | 关闭码 | 原因 |
 |--------|------|
 | `1003` | 连接被拒（`room_full` 或 `duplicate_id`） |
+| `1008` | token 无效或已过期，需重新登录 |
 
 ---
 
 ## 游戏流程
 
 ```
-连接 WebSocket
+注册 / 登录（/api/register 或 /api/login）
     │
     ▼
-  大厅（输入名称/房间）
+  大厅（输入房间名）
     │
     ▼
   等待对手（WAITING）

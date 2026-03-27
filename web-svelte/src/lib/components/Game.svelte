@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { gameState, sendAction, getMyId, getOppId } from '$lib/ws';
+	import { gameState, sendAction, getMyId, getOppId, getMyDisplayName, getOppDisplayName } from '$lib/ws';
 	import Hand from './Hand.svelte';
 	import OpponentHand from './OpponentHand.svelte';
 	import Kawa from './Kawa.svelte';
@@ -15,6 +15,7 @@
 
 	let turnLabel = $derived.by(() => {
 		if (s.phase === 'waiting') return 'Waiting for opponent...';
+		if (s.phase === 'waiting_new_game') return 'Waiting for opponent to start...';
 		if (s.phase === 'ended') return 'Round ended';
 		if (s.phase !== 'playing') return '';
 		if (!isMyTurn) return "Opponent's turn...";
@@ -62,7 +63,7 @@
 <div id="game" class="screen">
 	<!-- Opponent bar -->
 	<div class="player-bar opponent-bar">
-		<span class="player-name">{oppId || '???'}</span>
+		<span class="player-name">{getOppDisplayName() || '???'}</span>
 		<span class="player-points">{s.oppPoints.toLocaleString()}</span>
 		{#if s.phase === 'playing' && !s.myIsOya}
 			<span class="badge">親</span>
@@ -106,7 +107,7 @@
 	<!-- My bar -->
 	<div class="player-bar my-bar">
 		<div class="my-info">
-			<span class="player-name">{myId}</span>
+			<span class="player-name">{getMyDisplayName()}</span>
 			<span class="player-points">{s.myPoints.toLocaleString()}</span>
 			{#if s.phase === 'playing' && s.myIsOya}
 				<span class="badge">親</span>
@@ -116,8 +117,12 @@
 			{/if}
 		</div>
 		<div class="action-buttons">
-			{#if s.phase === 'waiting' || s.phase === 'ended'}
+			{#if s.phase === 'waiting'}
 				<button class="btn btn-action" onclick={() => sendAction('start')}>Start Game</button>
+			{:else if s.phase === 'ended'}
+				<button class="btn btn-action" onclick={() => sendAction('start_new')}>New Game</button>
+			{:else if s.phase === 'waiting_new_game'}
+				<span class="waiting-label">Waiting for opponent...</span>
 			{/if}
 			{#if s.phase === 'playing'}
 				{#if isMyTurn && s.turnStage === 'before_draw'}

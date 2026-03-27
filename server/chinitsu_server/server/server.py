@@ -1,14 +1,63 @@
 # pylint: disable=missing-function-docstring, missing-module-docstring, missing-class-docstring, line-too-long, logging-fstring-interpolation
 import logging
+import os
+from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from typing import List, Dict
 from game import ChinitsuGame
+from database import init_db
+from auth import verify_token, register_user, authenticate_user
+from models import RegisterRequest, LoginRequest, TokenResponse
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await init_db()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 logger = logging.getLogger("uvicorn")
+
+_ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.post("/api/register", response_model=TokenResponse)
+async def api_register(req: RegisterRequest):
+    try:
+        result = await register_user(req.username, req.password)
+        return TokenResponse(
+            access_token=result["access_token"],
+            uuid=result["uuid"],
+            username=result["username"],
+        )
+    except ValueError as e:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+
+
+@app.post("/api/login", response_model=TokenResponse)
+async def api_login(req: LoginRequest):
+    try:
+        result = await authenticate_user(req.username, req.password)
+        return TokenResponse(
+            access_token=result["access_token"],
+            uuid=result["uuid"],
+            username=result["username"],
+        )
+    except ValueError as e:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": str(e)})
 
 # Static file paths
 _SERVER_DIR = Path(__file__).resolve().parent
@@ -37,9 +86,10 @@ class ConnectionManager:
     def __init__(self, game_manager: GameManager):
         self.active_connections: Dict[str, List[WebSocket]] = {}
         self.connection_owner : Dict[WebSocket, str] = {}
+        self.connection_display_name: Dict[WebSocket, str] = {}
         self.game_manager = game_manager
 
-    async def connect(self, websocket: WebSocket, room_name: str, player_id: str):
+    async def connect(self, websocket: WebSocket, room_name: str, player_id: str, display_name: str = ""):
         if room_name in self.active_connections:
             if len(self.active_connections[room_name]) >= 2:
                 err_msg = "room_full"
@@ -53,28 +103,30 @@ class ConnectionManager:
                 await websocket.close(code=1003, reason=err_msg)
                 return False
 
+        display_name = display_name or player_id
         await websocket.accept()
         if room_name not in self.active_connections:
             self.active_connections[room_name] = []
         self.active_connections[room_name].append(websocket)
         self.connection_owner[websocket] = player_id
+        self.connection_display_name[websocket] = display_name
 
         # Initialize game for the first player (host)
         if len(self.active_connections[room_name]) == 1:
             self.game_manager.init_game(room_name)
             self.game_manager.get_game(room_name).add_player(player_id)
-            await self.broadcast(f"Game started in room {room_name}! Host is {player_id}", room_name)
+            await self.broadcast(f"Game started in room {room_name}! Host is {display_name}", room_name)
         # second player (new or rejoin)
         elif len(self.active_connections[room_name]) == 2:
             cur_game = self.game_manager.get_game(room_name)
             if cur_game.is_reconnecting:
                 cur_game.activate_player(player_id)
-                await self.broadcast(f"{player_id} rejoins {room_name}.", room_name)
+                await self.broadcast(f"{display_name} rejoins {room_name}.", room_name)
             else:
                 cur_game.add_player(player_id)
                 cur_game.set_running()
                 logger.info(f"Game started in room {room_name}!")
-                await self.broadcast(f"{player_id} joins {room_name}. Game START!", room_name)
+                await self.broadcast(f"{display_name} joins {room_name}. Game START!", room_name)
 
 
         return True
@@ -96,6 +148,7 @@ class ConnectionManager:
                 del self.active_connections[room_name]
 
             self.connection_owner[websocket] = None
+            self.connection_display_name.pop(websocket, None)
 
 
     async def broadcast(self, message: str, room_name: str):
@@ -165,20 +218,28 @@ manager = ConnectionManager(gm)
 app.mount("/assets", StaticFiles(directory=_CHINITSU_DIR / "assets"), name="assets")
 
 
-@app.websocket("/ws/{room_name}/{player_id}")
-async def websocket_endpoint(websocket: WebSocket, room_name: str, player_id: str):
-    if not await manager.connect(websocket, room_name, player_id):
+@app.websocket("/ws/{room_name}")
+async def websocket_endpoint(websocket: WebSocket, room_name: str, token: str = Query("")):
+    # Validate JWT token
+    payload = verify_token(token)
+    if payload is None:
+        await websocket.accept()
+        await websocket.close(code=1008, reason="invalid_token")
+        return
+
+    player_id = payload["uuid"]
+    display_name = payload["username"]
+
+    if not await manager.connect(websocket, room_name, player_id, display_name):
         return
 
     try:
         while True:
-
             data = await websocket.receive_json()
-            # await manager.broadcast(f"{player_id}: {data}", room_name)
             await manager.game_action(data, room_name, player_id)
     except WebSocketDisconnect:
         manager.disconnect(websocket, room_name, player_id)
-        await manager.broadcast(f"{player_id} left the room {room_name}", room_name)
+        await manager.broadcast(f"{display_name} left the room {room_name}", room_name)
 
 
 # API docs (AsyncAPI spec + viewer) — must come before the root mount
