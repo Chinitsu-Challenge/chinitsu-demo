@@ -291,8 +291,7 @@ html, body {
 }
 
 .kawa .tile.riichi-discard {
-  transform: rotate(90deg);
-  margin: 0 8px;
+  margin: 0 4px;
 }
 
 /* Fuuro (melds) */

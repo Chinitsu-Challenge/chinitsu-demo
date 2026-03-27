@@ -134,7 +134,7 @@ function handleMessage(data: Record<string, unknown>) {
 		logMsg(data.message as string, 'broadcast');
 		const msg = data.message as string;
 		const joinMatch = msg.match(/^(.+) joins/);
-		const hostMatch = msg.match(/Host is (.+)/);
+		const hostMatch = msg.match(/Host is ([^.]+)/);
 		if (joinMatch && joinMatch[1] !== myDisplayName) {
 			oppDisplayName = joinMatch[1];
 			gameState.update((s) => ({ ...s, oppDisplayName: joinMatch[1] }));

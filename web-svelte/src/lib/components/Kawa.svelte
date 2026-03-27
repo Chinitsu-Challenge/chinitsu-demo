@@ -4,9 +4,10 @@
 
 	interface Props {
 		kawa: KawaEntry[];
+		tileRotation?: number;
 	}
 
-	let { kawa }: Props = $props();
+	let { kawa, tileRotation = 0 }: Props = $props();
 
 	let rows = $derived(
 		Array.from({ length: Math.ceil(kawa.length / 5) }, (_, i) => kawa.slice(i * 5, i * 5 + 5))
@@ -21,6 +22,7 @@
 					<Tile
 						card={entry.card}
 						riichi={entry.isRiichi}
+						rotation={entry.isRiichi ? tileRotation + 1 : tileRotation}
 						lastDiscard={rowIdx * 5 + j === kawa.length - 1}
 					/>
 				{/each}

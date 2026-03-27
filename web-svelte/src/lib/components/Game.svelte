@@ -77,10 +77,10 @@
 	<OpponentHand count={oppHandSize} />
 
 	<!-- Opponent fuuro -->
-	<Fuuro melds={s.oppFuuro} />
+	<Fuuro melds={s.oppFuuro} tileRotation={2} />
 
 	<!-- Opponent kawa -->
-	<Kawa kawa={s.oppKawa} />
+	<Kawa kawa={s.oppKawa} tileRotation={2} />
 
 	<!-- Center info -->
 	<div id="center-info">
