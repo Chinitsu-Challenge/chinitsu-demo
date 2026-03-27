@@ -1,7 +1,10 @@
 # pylint: disable=missing-function-docstring, missing-module-docstring, missing-class-docstring, line-too-long, logging-fstring-interpolation
 import logging
+import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from typing import List, Dict
@@ -10,13 +13,23 @@ from database import init_db
 from auth import verify_token, register_user, authenticate_user
 from models import RegisterRequest, LoginRequest, TokenResponse
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await init_db()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 logger = logging.getLogger("uvicorn")
 
-
-@app.on_event("startup")
-async def startup():
-    await init_db()
+_ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.post("/api/register", response_model=TokenResponse)
