@@ -19,7 +19,8 @@ export const gameState = writable<GameState>({
 	turnStage: null,
 	selectedIdx: null,
 	wallCount: 36,
-	kyoutaku: 0
+	kyoutaku: 0,
+	oppDisplayName: ''
 });
 
 export const logs = writable<{ text: string; type: string }[]>([]);
@@ -134,8 +135,14 @@ function handleMessage(data: Record<string, unknown>) {
 		const msg = data.message as string;
 		const joinMatch = msg.match(/^(.+) joins/);
 		const hostMatch = msg.match(/Host is (.+)/);
-		if (joinMatch && joinMatch[1] !== myDisplayName) oppDisplayName = joinMatch[1];
-		if (hostMatch && hostMatch[1] !== myDisplayName) oppDisplayName = hostMatch[1];
+		if (joinMatch && joinMatch[1] !== myDisplayName) {
+			oppDisplayName = joinMatch[1];
+			gameState.update((s) => ({ ...s, oppDisplayName: joinMatch[1] }));
+		}
+		if (hostMatch && hostMatch[1] !== myDisplayName) {
+			oppDisplayName = hostMatch[1];
+			gameState.update((s) => ({ ...s, oppDisplayName: hostMatch[1] }));
+		}
 		return;
 	}
 

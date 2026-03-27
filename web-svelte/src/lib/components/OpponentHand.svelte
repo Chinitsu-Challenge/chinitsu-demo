@@ -10,6 +10,6 @@
 
 <div class="hand-row">
 	{#each Array(count) as _, i (i)}
-		<Tile back />
+		<Tile back rotation={2} />
 	{/each}
 </div>

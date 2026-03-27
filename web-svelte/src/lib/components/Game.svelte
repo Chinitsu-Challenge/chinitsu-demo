@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { gameState, sendAction, getMyId, getOppId, getMyDisplayName, getOppDisplayName } from '$lib/ws';
+	import { gameState, sendAction, getMyId, getOppId, getMyDisplayName } from '$lib/ws';
 	import Hand from './Hand.svelte';
 	import OpponentHand from './OpponentHand.svelte';
 	import Kawa from './Kawa.svelte';
@@ -63,7 +63,7 @@
 <div id="game" class="screen">
 	<!-- Opponent bar -->
 	<div class="player-bar opponent-bar">
-		<span class="player-name">{getOppDisplayName() || '???'}</span>
+		<span class="player-name">{s.oppDisplayName || '???'}</span>
 		<span class="player-points">{s.oppPoints.toLocaleString()}</span>
 		{#if s.phase === 'playing' && !s.myIsOya}
 			<span class="badge">親</span>
@@ -84,7 +84,7 @@
 
 	<!-- Center info -->
 	<div id="center-info">
-		<span>Wall: {s.wallCount}</span>
+		<span>{s.phase === 'playing' ? `Wall: ${s.wallCount}` : ''}</span>
 		<span class="center-mid">{turnLabel}</span>
 		<span>{s.kyoutaku > 0 ? `Riichi sticks: ${s.kyoutaku}` : ''}</span>
 	</div>

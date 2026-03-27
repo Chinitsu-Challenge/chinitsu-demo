@@ -20,6 +20,7 @@ export interface GameState {
 	selectedIdx: number | null;
 	wallCount: number;
 	kyoutaku: number;
+	oppDisplayName: string;
 }
 
 export interface AgariData {
