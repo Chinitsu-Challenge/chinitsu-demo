@@ -1,7 +1,8 @@
 import sys
 from pathlib import Path
 
-_server_dir = Path(__file__).resolve().parent
+_project_dir = Path(__file__).resolve().parent.parent
+_server_dir = _project_dir / "server" / "chinitsu_server" / "server"
 _chinitsu_dir = _server_dir.parent
 
 # Allow `from server import app` and satisfy server.py's own internal

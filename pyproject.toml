@@ -19,4 +19,4 @@ dependencies = [
 test = ["pytest", "httpx"]
 
 [tool.pytest.ini_options]
-testpaths = ["server/chinitsu_server/server"]
+testpaths = ["tests"]
