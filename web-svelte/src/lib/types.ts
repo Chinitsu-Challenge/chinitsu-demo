@@ -23,6 +23,11 @@ export interface GameState {
 	oppDisplayName: string;
 }
 
+export interface TenpaiInfo {
+	is_tenpai: boolean;
+	hand: string[];
+}
+
 export interface AgariData {
 	agari: boolean;
 	action: string;
@@ -32,4 +37,5 @@ export interface AgariData {
 	point: number;
 	yaku?: string[];
 	hand?: string[];
+	tenpai?: Record<string, TenpaiInfo>;
 }
