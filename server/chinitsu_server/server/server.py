@@ -126,7 +126,9 @@ class ConnectionManager:
                 cur_game.add_player(player_id)
                 cur_game.set_running()
                 logger.info(f"Game started in room {room_name}!")
-                await self.broadcast(f"{display_name} joins {room_name}. Game START!", room_name)
+                host_ws = next(ws for ws in self.active_connections[room_name] if self.connection_owner[ws] != player_id)
+                host_display = self.connection_display_name[host_ws]
+                await self.broadcast(f"{display_name} joins {room_name}. Host is {host_display}. Game START!", room_name)
 
 
         return True

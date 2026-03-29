@@ -3,16 +3,17 @@
 
 	interface Props {
 		melds: string[][];
+		tileRotation?: number;
 	}
 
-	let { melds }: Props = $props();
+	let { melds, tileRotation = 0 }: Props = $props();
 </script>
 
 <div class="fuuro-row">
 	{#each melds as meld}
 		<div class="meld-group">
 			{#each meld as card}
-				<Tile {card} />
+				<Tile {card} rotation={tileRotation} />
 			{/each}
 		</div>
 	{/each}

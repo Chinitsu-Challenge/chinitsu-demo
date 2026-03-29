@@ -82,6 +82,21 @@ Browser (SvelteKit) ──WebSocket──▶ server.py (ConnectionManager/GameMa
 
 Vite proxies `/ws` → `ws://localhost:8000` and `/assets` → `http://localhost:8000` during development.
 
+### Tile rotation
+
+Tile images are pre-rendered at four rotations. The `rotation` prop on `<Tile>` selects the correct asset — **never use CSS `transform: rotate()` to orient tiles**.
+
+| `rotation` | Asset suffix | Dimensions | Use |
+| --- | --- | --- | --- |
+| `0` | `_0.png` | 63 × 95 (portrait) | Normal upright tile |
+| `1` | `_1.png` | 85 × 78 (landscape) | Riichi discard (player side) |
+| `2` | `_2.png` | 63 × 95 (portrait) | Opponent-side face-up tiles (kawa, fuuro) |
+| `3` | `_3.png` | 85 × 78 (landscape) | Riichi discard (opponent side) |
+
+Back tiles (`back_*.png`) follow the same numbering but rotation 0 is used for both sides — the back design is orientation-neutral.
+
+After any frontend change, run `npm run build` from `web-svelte/` before testing through FastAPI.
+
 ### WebSocket Protocol
 
 Client sends: `{"action": "string", "card_idx": "string"}`
