@@ -2,13 +2,12 @@ import sys
 from pathlib import Path
 
 _project_dir = Path(__file__).resolve().parent.parent
-_server_dir = _project_dir / "server" / "chinitsu_server" / "server"
-_chinitsu_dir = _server_dir.parent
+_server_dir = _project_dir / "server"
 
-# Allow `from server import app` and satisfy server.py's own internal
+# Allow `from app import app` and satisfy app.py's own internal
 # bare imports (e.g. `from game import ChinitsuGame`).
 sys.path.insert(0, str(_server_dir))
 
-# server.py mounts the assets directory as a static route at import time.
+# app.py mounts the assets directory as a static route at import time.
 # Create it if assets haven't been downloaded yet so the import doesn't fail.
-(_chinitsu_dir / "assets").mkdir(exist_ok=True)
+(_server_dir / "assets").mkdir(exist_ok=True)

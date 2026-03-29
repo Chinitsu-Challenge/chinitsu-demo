@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Run server:**
 ```bash
-python server/start_server.py
+python start_server.py
 ```
 Starts a FastAPI/uvicorn server on `0.0.0.0:8000` (all interfaces).
 
@@ -21,19 +21,17 @@ python scripts/get_images.py
 
 **Build frontend (SvelteKit):**
 ```bash
-cd web-svelte && npm install && npm run build
+cd ../web-svelte && npm install && npm run build
 ```
 
 **Dev frontend with hot reload:**
 ```bash
-cd web-svelte && npm run dev
+cd ../web-svelte && npm run dev
 ```
 
 For hot-reload dev, set `VITE_WS_URL=ws://<LAN-IP>:8000` in `web-svelte/.env.local` so the dev server connects directly to the backend. Do **not** rely on Vite's WebSocket proxy — it is unreliable for this use case.
 
 **Normal workflow (no hot reload needed):** build with `npm run build`, then serve everything through FastAPI at port 8000. `VITE_WS_URL` should be left unset so `ws.ts` derives the WebSocket URL from `window.location.host` at runtime — no IP hardcoding required.
-
-`server/test.py` exists but is currently empty.
 
 ## Architecture
 
@@ -42,22 +40,24 @@ Chinitsu Showdown is a 2-player real-time mahjong (chinitsu variant) game server
 ### Request Flow
 
 ```
-Client WebSocket → server.py (ConnectionManager) → game.py (ChinitsuGame) → agari_judge.py → python-mahjong lib
+Client WebSocket → app.py (routes) + managers.py (ConnectionManager) → game.py (ChinitsuGame) → agari_judge.py → python-mahjong lib
 ```
 
 ### Key Files
 
-- **`server/server.py`** — WebSocket endpoint at `/ws/{room_name}/{player_id}`. Manages connections, reconnections, and routes client messages to the game. All game rooms are stored in-memory in `ConnectionManager`.
+- **`app.py`** — FastAPI app, HTTP auth routes (`/api/register`, `/api/login`), WebSocket endpoint at `/ws/{room_name}`, static file mounts.
 
-- **`server/game.py`** — Core game engine. `ChinitsuGame` manages game state (WAITING=0, RUNNING=1, RECONNECT=2, ENDED=3), the wall (yama), turns, and action processing (draw, discard, kan, riichi, tsumo, ron). `ChinitsuPlayer` holds per-player state (hand, points, flags).
+- **`managers.py`** — `GameManager` owns in-memory game rooms; `ConnectionManager` routes messages and handles disconnect/reconnect.
 
-- **`server/agari_judge.py`** — Wraps `python-mahjong` to evaluate winning hands, check yaku, and calculate point values.
+- **`game.py`** — Core game engine. `ChinitsuGame` manages game state (WAITING=0, RUNNING=1, RECONNECT=2, ENDED=3), the wall (yama), turns, and action processing (draw, discard, kan, riichi, tsumo, ron). `ChinitsuPlayer` holds per-player state (hand, points, flags).
 
-- **`server/debug_setting.py`** — Provides predetermined card distributions for testing. Activated by debug codes (`114514`, `1001`) passed during game setup.
+- **`agari_judge.py`** — Wraps `python-mahjong` to evaluate winning hands, check yaku, and calculate point values.
+
+- **`debug_setting.py`** — Provides predetermined card distributions for testing. Activated by debug codes (`114514`, `1001`) passed during game setup.
 
 ### Communication Protocol
 
-Clients send JSON messages with an `action` field. The server responds with game state updates broadcast to all players in the room. No authentication; player identity is solely the `player_id` path parameter.
+Clients send JSON messages with an `action` field. The server responds with game state updates broadcast to all players in the room. Player identity comes from JWT tokens passed as a query parameter on the WebSocket URL.
 
 ### Dependencies
 
