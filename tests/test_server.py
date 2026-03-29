@@ -64,7 +64,7 @@ def _start(ws1, ws2, debug_code: int = None):
     return (ws1, ws2) if msg1["is_oya"] else (ws2, ws1)
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def client():
     with TestClient(app) as c:
         yield c
