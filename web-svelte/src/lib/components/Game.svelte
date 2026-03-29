@@ -42,7 +42,6 @@
 		}
 	}
 
-	// Keyboard shortcuts
 	onMount(() => {
 		function onKey(e: KeyboardEvent) {
 			const st = $gameState;
@@ -61,94 +60,90 @@
 </script>
 
 <div id="game" class="screen">
-	<!-- Opponent bar -->
-	<div class="player-bar opponent-bar">
-		<span class="player-name">{s.oppDisplayName || '???'}</span>
-		<span class="player-points">{s.oppPoints.toLocaleString()}</span>
-		{#if s.phase === 'playing' && !s.myIsOya}
-			<span class="badge">親</span>
-		{/if}
-		{#if s.oppRiichi}
-			<span class="badge badge-riichi">立直</span>
-		{/if}
+	<!-- Top zone: hand pinned to top, fuuro on left -->
+	<div class="zone-top">
+		<div class="hand-with-fuuro">
+			<Fuuro melds={s.oppFuuro} tileRotation={2} />
+			<OpponentHand count={oppHandSize} />
+		</div>
 	</div>
 
-	<!-- Opponent hand -->
-	<OpponentHand count={oppHandSize} />
+	<!-- Mid zone: kawa + center panel + kawa, no flex growth -->
+	<div class="zone-mid">
+		<Kawa kawa={s.oppKawa} tileRotation={2} highlightLast={isMyTurn && s.turnStage === 'after_discard'} isOpponent />
 
-	<!-- Opponent fuuro -->
-	<Fuuro melds={s.oppFuuro} tileRotation={2} />
+		<div id="center-panel">
+			<div class="cp-player">
+				<span class="player-name">{s.oppDisplayName || '???'}</span>
+				<span class="player-points">{s.oppPoints.toLocaleString()}</span>
+				{#if s.phase === 'playing' && !s.myIsOya}<span class="badge">親</span>{/if}
+				{#if s.oppRiichi}<span class="badge badge-riichi">立直</span>{/if}
+			</div>
+			<div class="cp-divider"></div>
+			<div class="cp-game-info">
+				<span class="cp-stat">{s.phase === 'playing' ? `Wall: ${s.wallCount}` : ''}</span>
+				<span class="cp-stat">{s.kyoutaku > 0 ? `立直棒×${s.kyoutaku}` : ''}</span>
+			</div>
+			<span class="center-mid">{turnLabel}</span>
+			<div class="cp-divider"></div>
+			<div class="cp-player">
+				<span class="player-name">{getMyDisplayName()}</span>
+				<span class="player-points">{s.myPoints.toLocaleString()}</span>
+				{#if s.phase === 'playing' && s.myIsOya}<span class="badge">親</span>{/if}
+				{#if s.myRiichi}<span class="badge badge-riichi">立直</span>{/if}
+			</div>
+		</div>
 
-	<!-- Opponent kawa -->
-	<Kawa kawa={s.oppKawa} tileRotation={2} />
-
-	<!-- Center info -->
-	<div id="center-info">
-		<span>{s.phase === 'playing' ? `Wall: ${s.wallCount}` : ''}</span>
-		<span class="center-mid">{turnLabel}</span>
-		<span>{s.kyoutaku > 0 ? `Riichi sticks: ${s.kyoutaku}` : ''}</span>
+		<Kawa kawa={s.myKawa} highlightLast={!isMyTurn && s.turnStage === 'after_discard'} />
 	</div>
 
-	<!-- My kawa -->
-	<Kawa kawa={s.myKawa} />
-
-	<!-- My fuuro -->
-	<Fuuro melds={s.myFuuro} />
-
-	<!-- My hand -->
-	<Hand
-		tiles={s.myHand}
-		interactive={s.phase === 'playing' && isMyTurn && s.turnStage === 'after_draw'}
-		selectedIdx={s.selectedIdx}
-		turnStage={s.turnStage}
-		onselect={handleSelect}
-	/>
-
-	<!-- My bar -->
-	<div class="player-bar my-bar">
-		<div class="my-info">
-			<span class="player-name">{getMyDisplayName()}</span>
-			<span class="player-points">{s.myPoints.toLocaleString()}</span>
-			{#if s.phase === 'playing' && s.myIsOya}
-				<span class="badge">親</span>
-			{/if}
-			{#if s.myRiichi}
-				<span class="badge badge-riichi">立直</span>
-			{/if}
+	<!-- Bottom zone: grows upward, hand pinned to bottom, fuuro on right -->
+	<div class="zone-bot">
+		<div class="hand-with-fuuro">
+			<Hand
+				tiles={s.myHand}
+				interactive={s.phase === 'playing' && isMyTurn && s.turnStage === 'after_draw'}
+				selectedIdx={s.selectedIdx}
+				turnStage={s.turnStage}
+				onselect={handleSelect}
+			/>
+			<Fuuro melds={s.myFuuro} />
 		</div>
-		<div class="action-buttons">
-			{#if s.phase === 'waiting'}
-				<button class="btn btn-action" onclick={() => sendAction('start')}>Start Game</button>
-			{:else if s.phase === 'ended'}
-				<button class="btn btn-action" onclick={() => sendAction('start_new')}>New Game</button>
-			{:else if s.phase === 'waiting_new_game'}
-				<span class="waiting-label">Waiting for opponent...</span>
+	</div>
+
+	<!-- Action bar pinned to bottom -->
+	<div class="action-bar">
+		{#if s.phase === 'waiting'}
+			<button class="btn btn-action" onclick={() => sendAction('start')}>Start Game</button>
+		{:else if s.phase === 'ended'}
+			<button class="btn btn-action" onclick={() => sendAction('start_new')}>New Game</button>
+		{:else if s.phase === 'waiting_new_game'}
+			<span class="waiting-label">Waiting for opponent...</span>
+		{/if}
+		{#if s.phase === 'playing'}
+			{#if isMyTurn && s.turnStage === 'before_draw'}
+				<button class="btn btn-action" onclick={() => sendAction('draw')}>Draw (D)</button>
 			{/if}
-			{#if s.phase === 'playing'}
-				{#if isMyTurn && s.turnStage === 'before_draw'}
-					<button class="btn btn-action" onclick={() => sendAction('draw')}>Draw (D)</button>
-				{/if}
-				{#if isMyTurn && s.turnStage === 'after_draw'}
-					<button class="btn btn-tsumo" onclick={() => sendAction('tsumo')}>Tsumo (T)</button>
-					{#if !s.myRiichi}
-						<button
-							class="btn btn-riichi"
-							disabled={s.selectedIdx === null}
-							onclick={() => { sendAction('riichi', s.selectedIdx); gameState.update(p => ({...p, selectedIdx: null})); }}
-						>Riichi</button>
-						<button
-							class="btn btn-kan"
-							disabled={s.selectedIdx === null}
-							onclick={() => { sendAction('kan', s.selectedIdx); gameState.update(p => ({...p, selectedIdx: null})); }}
-						>Kan</button>
-					{/if}
-				{/if}
-				{#if isMyTurn && s.turnStage === 'after_discard'}
-					<button class="btn btn-ron" onclick={() => sendAction('ron')}>Ron (R)</button>
-					<button class="btn btn-action" onclick={() => sendAction('skip_ron')}>Skip (S)</button>
+			{#if isMyTurn && s.turnStage === 'after_draw'}
+				<button class="btn btn-tsumo" onclick={() => sendAction('tsumo')}>Tsumo (T)</button>
+				{#if !s.myRiichi}
+					<button
+						class="btn btn-riichi"
+						disabled={s.selectedIdx === null}
+						onclick={() => { sendAction('riichi', s.selectedIdx); gameState.update(p => ({...p, selectedIdx: null})); }}
+					>Riichi</button>
+					<button
+						class="btn btn-kan"
+						disabled={s.selectedIdx === null}
+						onclick={() => { sendAction('kan', s.selectedIdx); gameState.update(p => ({...p, selectedIdx: null})); }}
+					>Kan</button>
 				{/if}
 			{/if}
-		</div>
+			{#if isMyTurn && s.turnStage === 'after_discard'}
+				<button class="btn btn-ron" onclick={() => sendAction('ron')}>Ron (R)</button>
+				<button class="btn btn-action" onclick={() => sendAction('skip_ron')}>Skip (S)</button>
+			{/if}
+		{/if}
 	</div>
 
 	<AgariOverlay />

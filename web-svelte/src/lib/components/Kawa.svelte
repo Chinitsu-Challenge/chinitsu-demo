@@ -5,9 +5,11 @@
 	interface Props {
 		kawa: KawaEntry[];
 		tileRotation?: number;
+		highlightLast?: boolean;
+		isOpponent?: boolean;
 	}
 
-	let { kawa, tileRotation = 0 }: Props = $props();
+	let { kawa, tileRotation = 0, highlightLast = false, isOpponent = false }: Props = $props();
 
 	let rows = $derived(
 		Array.from({ length: Math.ceil(kawa.length / 5) }, (_, i) => kawa.slice(i * 5, i * 5 + 5))
@@ -15,7 +17,7 @@
 </script>
 
 <div class="kawa-section">
-	<div class="kawa">
+	<div class="kawa" class:kawa-opp={isOpponent}>
 		{#each rows as row, rowIdx}
 			<div class="kawa-row">
 				{#each row as entry, j}
@@ -23,7 +25,7 @@
 						card={entry.card}
 						riichi={entry.isRiichi}
 						rotation={entry.isRiichi ? tileRotation + 1 : tileRotation}
-						lastDiscard={rowIdx * 5 + j === kawa.length - 1}
+						lastDiscard={highlightLast && rowIdx * 5 + j === kawa.length - 1}
 					/>
 				{/each}
 			</div>
