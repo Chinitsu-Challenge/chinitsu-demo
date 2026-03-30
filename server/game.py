@@ -409,14 +409,17 @@ class ChinitsuGame:
             res = {player_id: {"message": "ok"}}
             if is_agari:
                 if is_tsumo:
-                    # Match 4-player mahjong scoring:
-                    #   Dealer tsumo: 3 non-dealers each pay (main + main_bonus)
-                    #   Non-dealer tsumo: dealer pays (main + main_bonus),
-                    #                     2 non-dealers each pay (additional + additional_bonus)
-                    main = agari.cost['main'] + agari.cost.get('main_bonus', 0)
-                    additional = agari.cost['additional'] + agari.cost.get('additional_bonus', 0)
-                    win_amount = main + 2 * additional
+                    if is_oya:
+                        # Dealer tsumo: 3 non-dealers each pay main (+bonus for honba)
+                        per_player = agari.cost['main'] + agari.cost.get('main_bonus', 0)
+                        win_amount = 3 * per_player
+                    else:
+                        # Non-dealer tsumo: dealer pays main, 2 non-dealers each pay additional
+                        main = agari.cost['main'] + agari.cost.get('main_bonus', 0)
+                        additional = agari.cost['additional'] + agari.cost.get('additional_bonus', 0)
+                        win_amount = main + 2 * additional
                 else:
+                    # Ron: loser pays the full amount directly
                     win_amount = agari.cost['main'] + agari.cost.get('main_bonus', 0)
                 # winner gains points (including kyoutaku sticks), loser pays base cost
                 p.point += win_amount + self.kyoutaku_number * 1000

@@ -12,7 +12,7 @@ Starts a FastAPI/uvicorn server on `0.0.0.0:8000` (all interfaces).
 
 > **VSCode note:** VSCode Helper binds `localhost:8000` and intercepts browser connections even with `remote.autoForwardPorts: false`. Always access via the machine's LAN IP (e.g. `http://10.110.11.x:8000`), not `localhost`.
 
-**Test client:** Open `client/index.html` in a browser and connect to `ws://<LAN-IP>:8000/ws/{room}/{player_id}`.
+**Test client:** Open `client/index.html` in a browser and connect to `ws://<LAN-IP>:8000/ws/{room_name}?token={jwt}`.
 
 **Download card assets:**
 ```bash

@@ -47,7 +47,7 @@ npx @asyncapi/cli validate docs/asyncapi.yaml
 npx @asyncapi/cli validate docs/asyncapi.zh.yaml
 ```
 
-Tests are in `tests/test_server.py`. Run with `uv run pytest -v` from the project root. Manual testing uses a browser connected to `ws://127.0.0.1:8000/ws/{room}/{player_id}`, or the debug codes described below.
+Tests are in `tests/test_server.py`. Run with `uv run pytest -v` from the project root. Manual testing uses a browser connected to `ws://127.0.0.1:8000/ws/{room_name}?token={jwt}`, or the debug codes described below.
 
 ## Architecture
 
