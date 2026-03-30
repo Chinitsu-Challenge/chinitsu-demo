@@ -26,8 +26,8 @@ def get_tenpai_tiles(hand: List[str], num_fuuro: int = 0) -> List[str]:
     for num in range(1, 10):
         test = hand + [f"{num}s"]
         hand_str = ''.join(sorted([s.strip('s') for s in test]))
-        tiles = TilesConverter.string_to_136_array(sou=hand_str)
-        if _shanten.calculate_shanten(tiles, open_sets_count=num_fuuro) == -1:
+        tiles = TilesConverter.string_to_34_array(sou=hand_str)
+        if _shanten.calculate_shanten(tiles) == -1:
             winning.append(f"{num}s")
     return winning
 
