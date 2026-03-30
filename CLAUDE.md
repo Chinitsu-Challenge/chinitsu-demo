@@ -11,14 +11,14 @@ uv sync
 
 **Start the backend server:**
 ```bash
-cd server/chinitsu_server
-uv run python server/start_server.py
+cd server
+uv run python start_server.py
 ```
 Listens on `0.0.0.0:8000`. API docs at `http://127.0.0.1:8000/api-docs`.
 
 **Download tile image assets (required once before running):**
 ```bash
-cd server/chinitsu_server
+cd server
 uv run python scripts/get_images.py
 ```
 
@@ -47,7 +47,7 @@ npx @asyncapi/cli validate docs/asyncapi.yaml
 npx @asyncapi/cli validate docs/asyncapi.zh.yaml
 ```
 
-There are currently no automated tests — `server/chinitsu_server/server/test.py` is empty. Manual testing uses a browser connected to `ws://127.0.0.1:8000/ws/{room}/{player_id}`, or the debug codes described below.
+Tests are in `tests/test_server.py`. Run with `uv run pytest -v` from the project root. Manual testing uses a browser connected to `ws://127.0.0.1:8000/ws/{room_name}?token={jwt}`, or the debug codes described below.
 
 ## Architecture
 
@@ -56,7 +56,7 @@ Chinitsu Showdown is a 2-player real-time mahjong game (chinitsu/清一色 varia
 ### Request Flow
 
 ```
-Browser (SvelteKit) ──WebSocket──▶ server.py (ConnectionManager/GameManager)
+Browser (SvelteKit) ──WebSocket──▶ app.py (routes) + managers.py (ConnectionManager/GameManager)
                                         │
                                         ▼
                                    game.py (ChinitsuGame / ChinitsuPlayer)
@@ -65,13 +65,14 @@ Browser (SvelteKit) ──WebSocket──▶ server.py (ConnectionManager/GameMa
                                    agari_judge.py ──▶ python-mahjong lib
 ```
 
-### Backend (`server/chinitsu_server/server/`)
+### Backend (`server/`)
 
-- **`server.py`** — FastAPI app, WebSocket endpoint at `/ws/{room_name}/{player_id}`. `GameManager` owns in-memory game rooms; `ConnectionManager` routes messages and handles disconnect/reconnect (game enters `RECONNECT` state when a player drops).
+- **`app.py`** — FastAPI app, routes (HTTP auth + WebSocket endpoint at `/ws/{room_name}`), static file mounts (`/assets`, `/api-docs`, `/`).
+- **`managers.py`** — `GameManager` owns in-memory game rooms; `ConnectionManager` routes messages and handles disconnect/reconnect (game enters `RECONNECT` state when a player drops).
 - **`game.py`** — Core engine. `ChinitsuGame` tracks game state (`WAITING=0`, `RUNNING=1`, `RECONNECT=2`, `ENDED=3`) and turn state (`BEFORE_DRAW=1`, `AFTER_DRAW=2`, `AFTER_DISCARD=3`). `ChinitsuPlayer` holds hand, kawa, fuuro, riichi/ippatsu/furiten flags. The `input(action, card_idx, player_id)` method is the single entry point for all player actions.
 - **`agari_judge.py`** — Wraps `python-mahjong`'s `HandCalculator` to validate winning hands and compute han/fu/points.
 - **`debug_setting.py`** — Predetermined tile distributions for testing. Activated by passing a debug code (`114514`, `1001`) as `card_idx` in a `start`/`start_new` action (value must be > 100).
-- **`start_server.py`** — Configures uvicorn logging and starts the app. Also mounts `/assets` (tile PNGs) and `/` (built SvelteKit frontend) as static routes.
+- **`start_server.py`** — Configures uvicorn logging and starts the app.
 
 ### Frontend (`web-svelte/src/`)
 

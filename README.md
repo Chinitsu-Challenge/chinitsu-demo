@@ -56,7 +56,7 @@ npm install
 ### 下载牌面素材
 
 ```bash
-cd server/chinitsu_server
+cd server
 uv run python scripts/get_images.py
 ```
 
@@ -65,8 +65,8 @@ uv run python scripts/get_images.py
 ### 启动后端服务
 
 ```bash
-cd server/chinitsu_server
-uv run python server/start_server.py
+cd server
+uv run python start_server.py
 ```
 
 服务默认运行在 `0.0.0.0:8000`。
@@ -549,4 +549,4 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 > 如新增错误码，在 `components/schemas/ErrorCode/enum` 中添加。
 > 两个文件内容需保持一致，仅语言不同。
 
-详细的字段对应关系见 `server/chinitsu_server/CLAUDE.md`。
+详细的字段对应关系见 `server/CLAUDE.md`。

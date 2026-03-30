@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from server import app
+from app import app
 
 # Debug codes from debug_setting.py.
 # 114514 → oya hand 11123455678999s: already a complete hand, wins by tsumo immediately.

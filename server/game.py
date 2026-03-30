@@ -404,11 +404,23 @@ class ChinitsuGame:
                 return res
 
 
-        def process_agari(agari: HandResponse):
+        def process_agari(agari: HandResponse, is_tsumo: bool, is_oya: bool):
             is_agari = (agari.han is not None and agari.han > 0)
             res = {player_id: {"message": "ok"}}
             if is_agari:
-                win_amount = agari.cost['main']
+                if is_tsumo:
+                    if is_oya:
+                        # Dealer tsumo: 3 non-dealers each pay main (+bonus for honba)
+                        per_player = agari.cost['main'] + agari.cost.get('main_bonus', 0)
+                        win_amount = 3 * per_player
+                    else:
+                        # Non-dealer tsumo: dealer pays main, 2 non-dealers each pay additional
+                        main = agari.cost['main'] + agari.cost.get('main_bonus', 0)
+                        additional = agari.cost['additional'] + agari.cost.get('additional_bonus', 0)
+                        win_amount = main + 2 * additional
+                else:
+                    # Ron: loser pays the full amount directly
+                    win_amount = agari.cost['main'] + agari.cost.get('main_bonus', 0)
                 # winner gains points (including kyoutaku sticks), loser pays base cost
                 p.point += win_amount + self.kyoutaku_number * 1000
                 opp.point -= win_amount
@@ -470,7 +482,7 @@ class ChinitsuGame:
             }
 
             agari = self.agari_judger.judge(p.hand, p.fuuro, p.hand[-1], **agari_condition)
-            res = process_agari(agari)
+            res = process_agari(agari, is_tsumo=True, is_oya=p.is_oya)
 
 
         if action == 'ron':
@@ -510,7 +522,7 @@ class ChinitsuGame:
             }
 
             agari = self.agari_judger.judge(p.hand + [opp.kawa[-1][0]], p.fuuro, opp.kawa[-1][0], **agari_condition)
-            res = process_agari(agari)
+            res = process_agari(agari, is_tsumo=False, is_oya=p.is_oya)
 
         # skip opponent turn (choose not to ron)
         if action == "skip_ron":

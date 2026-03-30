@@ -1,10 +1,10 @@
 import requests
 import os
+from pathlib import Path
 
-
-
-# Folder where you want to save the images
-save_folder = 'assets/'
+# Folder where you want to save the images — relative to this script's parent (server/)
+_SCRIPT_DIR = Path(__file__).resolve().parent
+save_folder = str(_SCRIPT_DIR.parent / 'assets') + os.sep
 
 # Ensure the save folder exists, create if it doesn't
 if not os.path.exists(save_folder):
