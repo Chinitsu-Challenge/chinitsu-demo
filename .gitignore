@@ -3,6 +3,6 @@ __pycache__/
 web-svelte/node_modules/
 web-svelte/build/
 web-svelte/.svelte-kit/
-
+.venv/
 *.lock
 *.db

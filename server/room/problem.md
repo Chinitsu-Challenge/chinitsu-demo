@@ -1,0 +1,5 @@
+自测发现以下问题：
+1.redis在销毁房间时，没有一并删除player_session下对应房间号里的player_session，可能是bug，导致垃圾数据积累
+2.快照好像更新不及时，比如"game_status"没有在一方玩家掉线时及时变为reconnect，顺便里面的display_name改一下，改成username而不是uuid
+3.room的状态机有不少问题，已知有
+4.重连后的玩家看到的房间状态是waiting，而看不到先前手里的手牌，也不能进行回合内的操作，掉线之后player_session更新不及时，在线状态还是online
