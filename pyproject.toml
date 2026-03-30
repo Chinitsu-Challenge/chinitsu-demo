@@ -13,6 +13,7 @@ dependencies = [
     "bcrypt",
     "python-jose[cryptography]",
     "aiosqlite",
+    "redis>=7.4.0",
 ]
 
 [project.optional-dependencies]
