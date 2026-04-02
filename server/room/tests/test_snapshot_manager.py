@@ -3,7 +3,7 @@ tests/room/test_snapshot_manager.py
 SnapshotManager 测试：序列化、视角裁剪、持久化。
 """
 import pytest
-from tests.room.conftest import run_async
+from helpers import run_async
 
 from room.snapshot_manager import SnapshotManager
 

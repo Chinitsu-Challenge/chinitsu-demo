@@ -1,9 +1,9 @@
 """
-tests/room/test_reconnect_manager.py
+server/room/tests/test_reconnect_manager.py
 ReconnectManager 测试：断线处理、重连流程、超时回调、connection_id 保护。
 """
 import pytest
-from tests.room.conftest import MockWebSocket, run_async, setup_running_room, setup_two_player_room
+from helpers import MockWebSocket, run_async, setup_running_room, setup_two_player_room
 
 from room.models import RoomStatus
 
@@ -74,7 +74,6 @@ class TestOnDisconnectRunning:
             rm, ws_alice, ws_bob = await setup_running_room()
 
             await rm.disconnect(ws_alice, "testroom", "uid-alice")
-            # 此时 alice 的重连计时器存在
             assert rm.timers.exists("reconnect:testroom:uid-alice")
 
             await rm.disconnect(ws_bob, "testroom", "uid-bob")
@@ -93,7 +92,7 @@ class TestOnDisconnectRunning:
             # 模拟新连接已建立：修改 connection_id
             session.connection_id = "new-connection-id"
 
-            # 用旧 connection_id 触发 disconnect（通过 reconnect_mgr 直接调用）
+            # 用旧 connection_id 触发 on_disconnect
             await rm.reconnect_mgr.on_disconnect("testroom", "uid-alice", "old-connection-id")
 
             # 状态应保持 RUNNING
@@ -332,11 +331,10 @@ class TestOnReconnect:
         run_async(inner())
 
     def test_reconnect_already_online_fails(self):
-        """已在线的玩家发起重连 → 返回 False（不是重连场景）"""
+        """已在线的玩家发起重连 → 返回 False"""
         async def inner():
             rm, ws_alice, ws_bob = await setup_running_room()
 
-            # Alice 目前在线（RUNNING），不应被当成重连
             ws_new = MockWebSocket("alice-new")
             success = await rm.reconnect_mgr.on_reconnect(
                 ws_new, "testroom", "uid-alice", "Alice"
@@ -349,7 +347,7 @@ class TestOnReconnect:
         """房间不在 RECONNECT 状态时重连 → 返回 False"""
         async def inner():
             rm, ws_alice, ws_bob = await setup_two_player_room()
-            # 房间在 WAITING，不是 RECONNECT
+            # 房间在 WAITING
             session = rm.get_session("testroom", "uid-alice")
             session.online = False  # 模拟离线
 
@@ -377,7 +375,6 @@ class TestReconnectTimeout:
             await rm.disconnect(ws_alice, "testroom", "uid-alice")
             assert room.status == RoomStatus.RECONNECT
 
-            # 直接触发超时回调
             await rm.reconnect_mgr._on_reconnect_timeout("testroom", room_id, "uid-alice")
 
             assert room.status == RoomStatus.ENDED
@@ -433,8 +430,7 @@ class TestReconnectTimeout:
             # 状态不应改变
             assert room.status == RoomStatus.RECONNECT
 
-            # 清理
-            await rm.timers.cancel("reconnect:testroom:uid-alice")
+            await rm.timers.cancel("reconnect:testroom:uid-alice")  # 清理
 
         run_async(inner())
 
@@ -451,10 +447,9 @@ class TestReconnectTimeout:
             await rm.reconnect_mgr.on_reconnect(ws_new, "testroom", "uid-alice", "Alice")
             assert room.status == RoomStatus.RUNNING
 
-            # 超时回调到来（太迟了）
+            # 超时回调到来（已过期）
             await rm.reconnect_mgr._on_reconnect_timeout("testroom", room.room_id, "uid-alice")
 
-            # 状态不应改变
             assert room.status == RoomStatus.RUNNING
 
         run_async(inner())
@@ -464,31 +459,27 @@ class TestReconnectTimeout:
         async def inner():
             from room.room_manager import RoomManager
             rm = RoomManager()
-
-            # 直接对不存在的房间调用超时
             await rm.reconnect_mgr._on_reconnect_timeout("ghost-room", "some-id", "uid-alice")
-            # 不应抛异常
 
         run_async(inner())
 
     def test_timeout_player_already_online_ignored(self):
-        """超时时离线玩家已重新上线（边界情况）→ 回调被忽略"""
+        """超时时离线玩家已标记在线 → 回调被跳过"""
         async def inner():
             rm, ws_alice, ws_bob = await setup_running_room()
             room = rm.rooms["testroom"]
 
             await rm.disconnect(ws_alice, "testroom", "uid-alice")
 
-            # 手动将 session 标记为在线（模拟重连刚完成但状态未来得及变化的边界场景）
+            # 手动将 session 标记为在线（模拟边界条件）
             session = rm.get_session("testroom", "uid-alice")
             session.online = True
 
             await rm.reconnect_mgr._on_reconnect_timeout("testroom", room.room_id, "uid-alice")
 
-            # 应该被忽略，不触发状态变化
-            assert room.status == RoomStatus.RECONNECT  # 未变（因为 session.online=True 导致回调退出）
+            # 应被跳过（session.online=True 导致回调提前退出）
+            assert room.status == RoomStatus.RECONNECT
 
-            # 清理
-            await rm.timers.cancel("reconnect:testroom:uid-alice")
+            await rm.timers.cancel("reconnect:testroom:uid-alice")  # 清理
 
         run_async(inner())

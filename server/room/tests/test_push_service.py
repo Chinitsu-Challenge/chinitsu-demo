@@ -3,7 +3,7 @@ tests/room/test_push_service.py
 PushService 单元测试：单播、广播、连接关闭。
 """
 import pytest
-from tests.room.conftest import MockWebSocket, run_async
+from helpers import MockWebSocket, run_async
 
 from room.models import PlayerSession
 from room.push_service import PushService

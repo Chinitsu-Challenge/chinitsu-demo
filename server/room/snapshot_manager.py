@@ -25,15 +25,24 @@ class SnapshotManager:
     # ── 序列化：从游戏对象生成快照 ──────────────────────────────
 
     @staticmethod
-    def serialize_game(game: Any, room_name: str, round_no: int = 0, round_limit: int = 8) -> dict:
+    def serialize_game(
+        game: Any,
+        room_name: str,
+        round_no: int = 0,
+        round_limit: int = 8,
+        display_names: dict[str, str] | None = None,
+    ) -> dict:
         """
         从 ChinitsuGame 对象序列化出完整快照。
         包含双方明文手牌（仅存储用，推送时会裁剪）。
+        display_names: {user_id: 玩家昵称}，若不传则回退到 player.name（通常是 UUID）。
         """
         players_data = {}
+        _names = display_names or {}
         for pid, player in game._players.items():
             players_data[pid] = {
-                "display_name": getattr(player, 'name', pid),
+                # 优先使用 session 中的真实昵称，回退到 player.name（可能是 UUID）
+                "display_name": _names.get(pid) or getattr(player, 'name', pid),
                 "hand": list(player.hand),
                 "fuuro": [list(f) for f in player.fuuro],
                 "kawa": [[k[0], k[1]] for k in player.kawa],
