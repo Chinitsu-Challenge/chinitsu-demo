@@ -211,7 +211,9 @@ class ConnectionManager:
                     if not result or bot_id not in result:
                         logger.warning("bot input returned empty: %s", choice)
                         break
-                    if result[bot_id].get("message") != "ok":
+                    msg = result[bot_id].get("message")
+                    bot_ok = (msg == "ok") or (msg is None and choice["action"] in ("draw",))
+                    if not bot_ok:
                         logger.warning("bot action rejected: %s -> %s", choice, result.get(bot_id))
                         break
                     for connection in self.active_connections.get(room_name, []):

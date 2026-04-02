@@ -116,6 +116,28 @@
 			/>
 		</div>
 
+		{#if frame.analysis && frame.analysis.kind === 'discard_recommendation'}
+			<div class="analysis-card">
+				<div class="analysis-title">
+					Analysis — {dn[frame.analysis.player_id] || frame.analysis.player_id.slice(0, 8)}
+				</div>
+				<div class="analysis-summary">{frame.analysis.summary}</div>
+				<div class="analysis-list">
+					{#each frame.analysis.recommendations as rec, i}
+						<div class="analysis-item">
+							<span class="rank">#{i + 1}</span>
+							<span>discard <code>{rec.discard}</code> (idx {rec.card_idx})</span>
+							<span>shanten {rec.shanten_after}</span>
+							{#if rec.shanten_after === 0}
+								<span>waits {rec.waits.join(', ') || '-'}</span>
+								<span>wall {rec.waits_in_wall}</span>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			</div>
+		{/if}
+
 		{#if frame.ryukyoku && frame.tenpai}
 			<div class="replay-banner">流局 — Exhaustive draw</div>
 		{:else if frame.agari !== undefined}
@@ -222,5 +244,35 @@
 		margin-top: 0.25rem;
 		font-size: 0.8rem;
 		opacity: 0.9;
+	}
+	.analysis-card {
+		margin: 0 1rem 0.75rem;
+		padding: 0.5rem 0.75rem;
+		border-radius: 8px;
+		background: rgba(255, 255, 255, 0.08);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		font-size: 0.85rem;
+	}
+	.analysis-title {
+		font-weight: 700;
+		margin-bottom: 0.25rem;
+	}
+	.analysis-summary {
+		opacity: 0.85;
+		margin-bottom: 0.35rem;
+	}
+	.analysis-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+	.analysis-item {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.6rem;
+	}
+	.rank {
+		color: var(--accent);
+		font-weight: 700;
 	}
 </style>

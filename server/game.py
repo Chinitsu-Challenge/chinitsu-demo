@@ -620,12 +620,16 @@ class ChinitsuGame:
             res[p_id].update(public_info)
 
         if action not in ("start", "start_new") and self._replay_initial is not None:
-            if player_id in res and res[player_id].get("message") == "ok":
-                rec_idx: Optional[int] = None
-                if action in ("discard", "riichi", "kan") and card_idx is not None:
-                    rec_idx = card_idx
-                self._replay_events.append(
-                    {"player_id": player_id, "action": action, "card_idx": rec_idx}
-                )
+            if player_id in res:
+                msg = res[player_id].get("message")
+                # Some successful actions (e.g. draw) may omit message.
+                success = (msg == "ok") or (msg is None and action in ("draw",))
+                if success:
+                    rec_idx: Optional[int] = None
+                    if action in ("discard", "riichi", "kan") and card_idx is not None:
+                        rec_idx = card_idx
+                    self._replay_events.append(
+                        {"player_id": player_id, "action": action, "card_idx": rec_idx}
+                    )
 
         return res

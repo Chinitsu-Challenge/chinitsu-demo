@@ -64,4 +64,16 @@ export interface ReplayFrame {
 	ryukyoku?: boolean;
 	tenpai?: Record<string, TenpaiInfo>;
 	agari_point?: number;
+	analysis?: {
+		player_id: string;
+		kind: 'discard_recommendation';
+		summary: string;
+		recommendations: Array<{
+			card_idx: number;
+			discard: string;
+			shanten_after: number;
+			waits: string[];
+			waits_in_wall: number;
+		}>;
+	};
 }

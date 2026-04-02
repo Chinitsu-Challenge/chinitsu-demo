@@ -352,6 +352,7 @@ class TestVsCpu:
         assert "hand" in msg
 
 
+
 # ---------------------------------------------------------------------------
 # Replay
 # ---------------------------------------------------------------------------
@@ -407,3 +408,32 @@ class TestReplay:
                 msg = ws1.receive_json()
         assert msg.get("message") == "no_replay_available"
         assert "replay" not in msg
+
+    def test_replay_records_draw_event(self, client):
+        with _room(client) as (ws1, ws2, _room_name):
+            ws_oya, ws_ko = _start(ws1, ws2)
+            ws_oya.send_json({"action": "discard", "card_idx": "0"})
+            ws_oya.receive_json()
+            ws_ko.receive_json()
+            ws_ko.send_json({"action": "skip_ron", "card_idx": ""})
+            ws_oya.receive_json()
+            ws_ko.receive_json()
+            ws_ko.send_json({"action": "draw", "card_idx": ""})
+            ws_ko.receive_json()
+            ws_oya.receive_json()
+
+            ws_oya.send_json({"action": "export_replay", "card_idx": ""})
+            msg = ws_oya.receive_json()
+            rep = msg["replay"]
+        assert any(ev.get("action") == "draw" for ev in rep["events"])
+
+    def test_build_frames_contains_analysis(self, client):
+        with _room(client) as (ws1, ws2, _room_name):
+            ws_oya, ws_ko = _start(ws1, ws2)
+            ws_oya.send_json({"action": "export_replay", "card_idx": ""})
+            msg = ws_oya.receive_json()
+            rep = msg["replay"]
+        resp = client.post("/api/replay/build-frames", json=rep)
+        assert resp.status_code == 200, resp.text
+        frames = resp.json()["frames"]
+        assert "analysis" in frames[0]

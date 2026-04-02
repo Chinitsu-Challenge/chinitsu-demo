@@ -4,6 +4,8 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 from game import ChinitsuGame, TurnState, RUNNING
+from bot_player import shanten_closed
+from agari_judge import get_tenpai_tiles
 
 
 def _stage_to_str(stage: int) -> str:
@@ -90,7 +92,54 @@ def _frame_from_game(
             frame[k] = overlay[k]
     if overlay.get("agari") is not None and "point" in overlay:
         frame["agari_point"] = overlay["point"]
+    analysis = _analyze_position(g)
+    if analysis:
+        frame["analysis"] = analysis
     return frame
+
+
+def _analyze_position(g: ChinitsuGame) -> Optional[Dict[str, Any]]:
+    """
+    Lightweight replay analysis for the actor who is expected to discard now.
+    """
+    if g.is_ended:
+        return None
+    if g.state.stage != TurnState.AFTER_DRAW:
+        return None
+    pid = g.state.current_player
+    if not pid:
+        return None
+    p = g.player(pid)
+    if p.len_hand != 14:
+        return None
+
+    opts: List[Dict[str, Any]] = []
+    for idx, tile in enumerate(p.hand):
+        rest = p.hand[:idx] + p.hand[idx + 1 :]
+        shanten = shanten_closed(rest)
+        waits: List[str] = []
+        wall_count = 0
+        if shanten == 0:
+            waits = sorted(get_tenpai_tiles(rest, p.num_fuuro))
+            wall_count = sum(g.yama.count(t) for t in waits)
+        opts.append(
+            {
+                "card_idx": idx,
+                "discard": tile,
+                "shanten_after": shanten,
+                "waits": waits,
+                "waits_in_wall": wall_count,
+            }
+        )
+
+    opts.sort(key=lambda x: (x["shanten_after"], -x["waits_in_wall"], x["card_idx"]))
+    top = opts[:3]
+    return {
+        "player_id": pid,
+        "kind": "discard_recommendation",
+        "summary": "Lower shanten first, then more waits left in wall.",
+        "recommendations": top,
+    }
 
 
 def build_frames(replay: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -113,7 +162,9 @@ def build_frames(replay: Dict[str, Any]) -> List[Dict[str, Any]]:
         cid = ev.get("card_idx")
         pid = ev["player_id"]
         result = g.input(action, cid, pid)
-        if pid not in result or result[pid].get("message") != "ok":
+        msg = result.get(pid, {}).get("message") if isinstance(result, dict) else None
+        ok = (msg == "ok") or (msg is None and action in ("draw",))
+        if pid not in result or not ok:
             raise ValueError(f"replay desync at step {i}: {result!r}")
         sample = result[g.player_ids[0]]
         overlay = {}
