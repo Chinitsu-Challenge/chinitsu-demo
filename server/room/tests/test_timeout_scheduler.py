@@ -4,7 +4,7 @@ TimeoutScheduler 单元测试：定时器挂载、取消、前缀批量取消。
 """
 import asyncio
 import pytest
-from tests.room.conftest import run_async
+from helpers import run_async
 
 from room.timeout_scheduler import TimeoutScheduler
 

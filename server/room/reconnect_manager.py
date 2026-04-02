@@ -75,11 +75,12 @@ class ReconnectManager:
             logger.error("状态转移失败: RUNNING → RECONNECT [%s]", room_name)
             return
 
-        # 保存快照（确保断线前的最新状态）
+        # 保存快照（确保断线前的最新状态，含真实昵称）
         game = self._rm.games.get(room_name)
         if game is not None:
             snapshot = self._rm.snapshot_mgr.serialize_game(
-                game, room_name, room.round_no, room.round_limit
+                game, room_name, room.round_no, room.round_limit,
+                display_names=self._rm.get_display_names(room_name),
             )
             await self._rm.snapshot_mgr.save_snapshot(room_name, snapshot)
 

@@ -80,6 +80,9 @@ class RoomManager:
         处理：创建房间 / 加入房间 / 断线重连。
         返回 True 表示连接成功（ws 已 accept），False 表示拒绝。
         """
+        # 用于防止重复 accept：RECONNECT 分支可能已提前 accept
+        ws_accepted = False
+
         # 校验房间名
         if not self._validate_room_name(room_name):
             await ws.accept()
@@ -94,32 +97,36 @@ class RoomManager:
             session = self.get_session(room_name, user_id)
             if session is not None and not session.online and user_id in room.player_ids:
                 await ws.accept()
+                ws_accepted = True
                 success = await self.reconnect_mgr.on_reconnect(
                     ws, room_name, user_id, display_name
                 )
                 if success:
                     return True
-                # 重连失败，继续走常规加入流程（可能被拒绝）
+                # 重连失败，继续走常规加入流程（ws 已 accept，后续跳过重复 accept）
 
         # ── 场景 2：房间已存在，检查能否加入 ──────────
         if room is not None:
             # 满员检查
             if room.is_full:
-                await ws.accept()
+                if not ws_accepted:
+                    await ws.accept()
                 code, reason = WS_CLOSE_ROOM_FULL
                 await ws.close(code=code, reason=reason)
                 return False
-            # 重复 ID 检查
+            # 重复 ID 检查（仅在线玩家才拒绝，已离线的允许重新加入）
             if user_id in room.player_ids:
                 session = self.get_session(room_name, user_id)
                 if session and session.online:
-                    await ws.accept()
+                    if not ws_accepted:
+                        await ws.accept()
                     code, reason = WS_CLOSE_DUPLICATE_ID
                     await ws.close(code=code, reason=reason)
                     return False
 
         # ── 接受连接 ─────────────────────────────────
-        await ws.accept()
+        if not ws_accepted:
+            await ws.accept()
 
         if room is None:
             # 场景 3：房间不存在 → 创建房间
@@ -518,7 +525,8 @@ class RoomManager:
 
         # 保存快照
         snapshot = self.snapshot_mgr.serialize_game(
-            game, room_name, room.round_no, room.round_limit
+            game, room_name, room.round_no, room.round_limit,
+            display_names=self.get_display_names(room_name),
         )
         await self.snapshot_mgr.save_snapshot(room_name, snapshot)
 
@@ -587,7 +595,8 @@ class RoomManager:
 
         # 保存初始快照
         snapshot = self.snapshot_mgr.serialize_game(
-            game, room_name, room.round_no, room.round_limit
+            game, room_name, room.round_no, room.round_limit,
+            display_names=self.get_display_names(room_name),
         )
         await self.snapshot_mgr.save_snapshot(room_name, snapshot)
 
@@ -610,7 +619,8 @@ class RoomManager:
 
         # 保存快照
         snapshot = self.snapshot_mgr.serialize_game(
-            game, room_name, room.round_no, room.round_limit
+            game, room_name, room.round_no, room.round_limit,
+            display_names=self.get_display_names(room_name),
         )
         await self.snapshot_mgr.save_snapshot(room_name, snapshot)
 
@@ -707,6 +717,13 @@ class RoomManager:
         """获取指定玩家的会话"""
         return self.sessions.get(room_name, {}).get(user_id)
 
+    def get_display_names(self, room_name: str) -> dict[str, str]:
+        """从 session 中获取房间内所有玩家的昵称映射 {user_id: display_name}"""
+        return {
+            uid: s.display_name
+            for uid, s in self.sessions.get(room_name, {}).items()
+        }
+
     def _remove_player_from_room(self, room_name: str, user_id: str) -> None:
         """从房间中移除玩家（仅用于 WAITING/ENDED 断线）"""
         room = self.rooms.get(room_name)
@@ -765,9 +782,14 @@ class RoomManager:
         if redis is None:
             return
         try:
-            # 获取所有玩家 session key
+            # 合并 room.player_ids 与 sessions.keys()：
+            # 两者取并集确保在大厅断线（已从 player_ids 移除但 session key 还留在 Redis）
+            # 的玩家记录也能被正确清除。
             room = self.rooms.get(room_name)
-            player_ids = room.player_ids if room else []
+            from_room = set(room.player_ids if room else [])
+            from_sessions = set(self.sessions.get(room_name, {}).keys())
+            player_ids = from_room | from_sessions
+
             keys_to_delete = [f"room:{room_name}", f"snapshot:{room_name}"]
             for pid in player_ids:
                 keys_to_delete.append(f"player_session:{room_name}:{pid}")

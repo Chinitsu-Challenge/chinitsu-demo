@@ -4,7 +4,7 @@ Room 与 PlayerSession 数据类单元测试：序列化、状态变更等。
 """
 import time
 import pytest
-from tests.room.conftest import MockWebSocket
+from helpers import MockWebSocket
 
 from room.models import Room, PlayerSession, RoomStatus, ROOM_MAX_LIFETIME_SEC, DEFAULT_ROUND_LIMIT
 

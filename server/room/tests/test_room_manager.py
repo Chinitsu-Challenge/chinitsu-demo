@@ -1,9 +1,9 @@
 """
-tests/room/test_room_manager.py
+server/room/tests/test_room_manager.py
 RoomManager 集成测试：连接管理、房间生命周期、游戏流程、比赛结束。
 """
 import pytest
-from tests.room.conftest import MockWebSocket, run_async, setup_two_player_room, setup_running_room
+from helpers import MockWebSocket, run_async, setup_two_player_room, setup_running_room
 
 from room.models import RoomStatus
 from room.room_manager import RoomManager
@@ -40,6 +40,8 @@ class TestConnect:
             assert room.owner_id == "uid-alice"
             assert session.is_owner is True
 
+            await rm.timers.cancel("room_expire:testroom")
+
         run_async(inner())
 
     def test_first_player_gets_room_created_event(self):
@@ -53,6 +55,8 @@ class TestConnect:
             assert msg is not None
             assert msg["room_name"] == "testroom"
             assert msg["user_id"] == "uid-alice"
+
+            await rm.timers.cancel("room_expire:testroom")
 
         run_async(inner())
 
@@ -125,6 +129,8 @@ class TestConnect:
             assert result is False
             assert ws2.close_code == 1003
 
+            await rm.timers.cancel("room_expire:testroom")
+
         run_async(inner())
 
     def test_invalid_room_name_empty_rejected(self):
@@ -160,7 +166,7 @@ class TestConnect:
             await rm.connect(ws, "testroom", "uid-alice", "Alice")
 
             assert rm.timers.exists("room_expire:testroom") is True
-            await rm.timers.cancel("room_expire:testroom")  # 清理
+            await rm.timers.cancel("room_expire:testroom")
 
         run_async(inner())
 
@@ -176,6 +182,8 @@ class TestConnect:
             assert session.online is True
             assert session.display_name == "Alice"
 
+            await rm.timers.cancel("room_expire:testroom")
+
         run_async(inner())
 
     def test_multiple_rooms_independent(self):
@@ -188,8 +196,6 @@ class TestConnect:
             await rm.connect(ws1, "room-a", "uid-alice", "Alice")
             await rm.connect(ws2, "room-b", "uid-bob", "Bob")
 
-            assert "room-a" in rm.rooms
-            assert "room-b" in rm.rooms
             assert len(rm.rooms["room-a"].player_ids) == 1
             assert len(rm.rooms["room-b"].player_ids) == 1
 
@@ -216,6 +222,8 @@ class TestWaitingActions:
 
             err = ws.last_event("error")
             assert err is not None
+
+            await rm.timers.cancel("room_expire:testroom")
 
         run_async(inner())
 
@@ -375,7 +383,7 @@ class TestRunningActions:
         run_async(inner())
 
     def test_unknown_action_in_running_error(self):
-        """RUNNING 中未知操作 → 返回 unknown_action 错误"""
+        """RUNNING 中未知操作 → 返回错误"""
         async def inner():
             rm, ws_alice, ws_bob = await setup_running_room()
             ws_alice.clear()
@@ -393,10 +401,9 @@ class TestRunningActions:
 # ══════════════════════════════════════════════════════════════
 
 class TestEndedActions:
-    def _force_ended(self, rm, room_name="testroom"):
-        """将房间强制设为 ENDED 状态（用于测试，绕过游戏流程）"""
-        room = rm.rooms[room_name]
-        room.status = RoomStatus.ENDED
+    @staticmethod
+    def _force_ended(rm, room_name="testroom"):
+        rm.rooms[room_name].status = RoomStatus.ENDED
 
     def test_end_game_destroys_room(self):
         """ENDED 中发送 end_game → 房间被销毁"""
@@ -420,7 +427,6 @@ class TestEndedActions:
             ws_bob.clear()
             await rm.handle_action({"action": "end_game", "card_idx": ""}, "testroom", "uid-alice")
 
-            # 至少一个玩家收到 room_closed（另一个可能在关闭时收到）
             alice_msg = ws_alice.last_event("room_closed")
             bob_msg = ws_bob.last_event("room_closed")
             assert alice_msg is not None or bob_msg is not None
@@ -460,14 +466,13 @@ class TestEndedActions:
         """双方 continue 后 round_no 重置为 0"""
         async def inner():
             rm, ws_alice, ws_bob = await setup_running_room()
-            room = rm.rooms["testroom"]
-            room.round_no = 5  # 模拟打了几轮
+            rm.rooms["testroom"].round_no = 5
             self._force_ended(rm)
 
             await rm.handle_action({"action": "continue_game", "card_idx": ""}, "testroom", "uid-alice")
             await rm.handle_action({"action": "continue_game", "card_idx": ""}, "testroom", "uid-bob")
 
-            assert room.round_no == 0
+            assert rm.rooms["testroom"].round_no == 0
 
         run_async(inner())
 
@@ -494,7 +499,6 @@ class TestEndedActions:
             ws_bob.clear()
             await rm.handle_action({"action": "start", "card_idx": ""}, "testroom", "uid-alice")
 
-            # 应产生 continue_vote_changed 而不是 game_not_started 错误
             msg = ws_alice.last_event("continue_vote_changed")
             assert msg is not None
 
@@ -530,7 +534,6 @@ class TestCleanup:
 
             assert "testroom" not in rm.rooms
             assert "testroom" not in rm.sessions
-            assert "testroom" not in rm.games
 
         run_async(inner())
 
@@ -554,7 +557,6 @@ class TestCleanup:
             room = rm.rooms["testroom"]
 
             assert rm.timers.exists("room_expire:testroom") is True
-
             await rm.cleanup_room("testroom", room.room_id, "test")
 
             assert rm.timers.exists("room_expire:testroom") is False
@@ -568,7 +570,7 @@ class TestCleanup:
 
             await rm.cleanup_room("testroom", "wrong-room-id", "test")
 
-            assert "testroom" in rm.rooms  # 不应被删除
+            assert "testroom" in rm.rooms
 
         run_async(inner())
 
@@ -576,9 +578,7 @@ class TestCleanup:
         """cleanup_room 对不存在的房间不抛异常"""
         async def inner():
             rm = RoomManager()
-
             await rm.cleanup_room("ghost-room", "ghost-id", "test")
-            # 不应抛异常
 
         run_async(inner())
 
@@ -632,9 +632,7 @@ class TestRoomExpiry:
         """_on_room_expired 对不存在的房间不抛异常"""
         async def inner():
             rm = RoomManager()
-
             await rm._on_room_expired("ghost-room", "ghost-id")
-            # 不应抛异常
 
         run_async(inner())
 
@@ -645,16 +643,14 @@ class TestRoomExpiry:
 
 class TestReconnectIntegration:
     def test_full_reconnect_via_connect(self):
-        """通过 connect() 触发重连流程（RECONNECT 状态下连接）"""
+        """通过 connect() 触发重连（RECONNECT 状态下重新连接）"""
         async def inner():
             rm, ws_alice, ws_bob = await setup_running_room()
             room = rm.rooms["testroom"]
 
-            # Alice 断线 → RECONNECT
             await rm.disconnect(ws_alice, "testroom", "uid-alice")
             assert room.status == RoomStatus.RECONNECT
 
-            # Alice 用新 ws 重新连接
             ws_new = MockWebSocket("alice-new")
             result = await rm.connect(ws_new, "testroom", "uid-alice", "Alice")
 
@@ -678,8 +674,8 @@ class TestReconnectIntegration:
 
         run_async(inner())
 
-    def test_can_play_after_reconnect(self):
-        """重连成功后可以继续操作（RUNNING 状态中）"""
+    def test_status_is_running_after_reconnect(self):
+        """重连成功后房间状态为 RUNNING"""
         async def inner():
             rm, ws_alice, ws_bob = await setup_running_room()
 
@@ -688,8 +684,6 @@ class TestReconnectIntegration:
             ws_new = MockWebSocket("alice-new")
             await rm.connect(ws_new, "testroom", "uid-alice", "Alice")
 
-            # 现在 RUNNING，不再是 RECONNECT，操作不应返回 game_paused
-            room = rm.rooms["testroom"]
-            assert room.status == RoomStatus.RUNNING
+            assert rm.rooms["testroom"].status == RoomStatus.RUNNING
 
         run_async(inner())

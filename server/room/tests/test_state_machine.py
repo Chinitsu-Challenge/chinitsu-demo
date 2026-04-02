@@ -3,7 +3,7 @@ tests/room/test_state_machine.py
 房间状态机单元测试：覆盖所有合法与非法转移路径。
 """
 import pytest
-from tests.room.conftest import *  # noqa: F401, F403
+from helpers import MockWebSocket, run_async, setup_two_player_room, setup_running_room  # noqa: F401
 
 from room.models import RoomStatus, RoomEvent
 from room.state_machine import transition, can_transition
