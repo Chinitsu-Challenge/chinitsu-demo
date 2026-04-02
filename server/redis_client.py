@@ -37,6 +37,14 @@ async def close_redis():
     """关闭 Redis 连接。在 FastAPI lifespan 关闭时调用。"""
     global _client
     if _client is not None:
-        await _client.close()
+        try:
+            await _client.aclose()
+        except RuntimeError as e:
+            # 测试环境中 room 单元测试会在独立 event loop 中使用 Redis 连接，
+            # 这些临时 loop 关闭后连接池中会有 orphaned 连接。
+            # 关闭时忽略 "Event loop is closed" 错误，不影响正确性。
+            logger.debug("Redis 关闭时忽略 event loop 错误: %s", e)
+        except Exception as e:
+            logger.warning("Redis 关闭时出错: %s", e)
         _client = None
         logger.info("Redis 连接已关闭")
