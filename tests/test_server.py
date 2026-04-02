@@ -313,6 +313,46 @@ class TestGameplay:
 
 
 # ---------------------------------------------------------------------------
+# Vs CPU (solo)
+# ---------------------------------------------------------------------------
+
+
+class TestVsCpu:
+    def test_vs_cpu_broadcast_and_single_start_deals(self, client):
+        """One human + bot=1: no second WS; one start should deal (no waiting_for_opponent)."""
+        room = _uid()
+        token = _register(client, "solo_" + _uid())
+        with client.websocket_connect(f"/ws/{room}?token={token}&bot=1") as ws:
+            ws.receive_json()  # broadcast (CPU seated)
+            ws.send_json({"action": "start", "card_idx": ""})
+            msg = ws.receive_json()
+        assert msg.get("message") != "waiting_for_opponent"
+        assert "hand" in msg
+        assert isinstance(msg["hand"], list)
+
+    def test_vs_cpu_rejects_second_human(self, client):
+        room = _uid()
+        t1 = _register(client, "a_" + _uid())
+        t2 = _register(client, "b_" + _uid())
+        with client.websocket_connect(f"/ws/{room}?token={t1}&bot=1") as ws1:
+            ws1.receive_json()
+            with client.websocket_connect(f"/ws/{room}?token={t2}") as ws2:
+                with pytest.raises(WebSocketDisconnect) as exc:
+                    ws2.receive_json()
+                assert exc.value.code == 1003
+
+    @pytest.mark.parametrize("lvl", ["easy", "normal", "hard", "unknown"])
+    def test_vs_cpu_level_query_is_accepted(self, client, lvl):
+        room = _uid()
+        token = _register(client, "solo_" + _uid())
+        with client.websocket_connect(f"/ws/{room}?token={token}&bot=1&bot_level={lvl}") as ws:
+            ws.receive_json()
+            ws.send_json({"action": "start", "card_idx": ""})
+            msg = ws.receive_json()
+        assert "hand" in msg
+
+
+# ---------------------------------------------------------------------------
 # Replay
 # ---------------------------------------------------------------------------
 

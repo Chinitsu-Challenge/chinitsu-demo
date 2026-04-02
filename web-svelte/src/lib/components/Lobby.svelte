@@ -10,6 +10,8 @@
 	let roomName = $state('');
 	let status = $state('');
 	let connecting = $state(false);
+	let vsCpu = $state(false);
+	let botLevel = $state<'easy' | 'normal' | 'hard'>('normal');
 
 	const username = getUsername();
 
@@ -20,7 +22,7 @@
 		}
 		status = 'Connecting...';
 		connecting = true;
-		const result = await connect(roomName.trim());
+		const result = await connect(roomName.trim(), { vsBot: vsCpu, botLevel });
 		if (!result.ok) {
 			status = result.reason ?? 'Connection failed.';
 			connecting = false;
@@ -54,6 +56,20 @@
 				placeholder="Room to join"
 			/>
 		</div>
+		<label class="vs-cpu-row">
+			<input type="checkbox" bind:checked={vsCpu} />
+			<span>Play vs CPU（单机人机）</span>
+		</label>
+		{#if vsCpu}
+			<div class="form-group">
+				<label for="cpu-level">CPU Difficulty</label>
+				<select id="cpu-level" bind:value={botLevel}>
+					<option value="easy">Easy</option>
+					<option value="normal">Normal</option>
+					<option value="hard">Hard</option>
+				</select>
+			</div>
+		{/if}
 		<button class="btn btn-primary" disabled={connecting} onclick={handleConnect}>Connect</button>
 		<p class="replay-link">
 			<a href="/replay">Open replay viewer</a>
@@ -97,5 +113,19 @@
 	.replay-hint {
 		color: #888;
 		font-size: 0.85rem;
+	}
+	.vs-cpu-row {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		margin-bottom: 1rem;
+		font-size: 0.9rem;
+		color: #ccc;
+		cursor: pointer;
+		user-select: none;
+	}
+	.vs-cpu-row input {
+		cursor: pointer;
 	}
 </style>

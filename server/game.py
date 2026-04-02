@@ -145,6 +145,9 @@ class ChinitsuGame:
         self._replay_events: List[Dict[str, Any]] = []
         self._replay_initial: Optional[Dict[str, Any]] = None
         self._display_names: Dict[str, str] = {}
+        self.vs_bot = False
+        self.bot_player_id: Optional[str] = None
+        self.bot_level: str = "normal"
         self.set_rules(rules)
 
     def set_display_name(self, player_id: str, display_name: str) -> None:
@@ -351,6 +354,8 @@ class ChinitsuGame:
 
             # both players must signal ready before the round starts
             self._ready.add(player_id)
+            if self.vs_bot and self.bot_player_id:
+                self._ready.add(self.bot_player_id)
             if len(self._ready) < 2:
                 return {player_id: {"action": action, "message": "waiting_for_opponent"}}
             self._ready.clear()

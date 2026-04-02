@@ -63,7 +63,8 @@ export function sendAction(action: string, cardIdx?: number | null) {
 
 // --- Connection ---
 export function connect(
-	roomName: string
+	roomName: string,
+	opts?: { vsBot?: boolean; botLevel?: 'easy' | 'normal' | 'hard' }
 ): Promise<{ ok: boolean; reason?: string }> {
 	myId = getUuid();
 	myDisplayName = getUsername();
@@ -82,7 +83,10 @@ export function connect(
 		// In dev, set VITE_WS_URL to point at the backend (e.g. ws://localhost:8000).
 		const base = import.meta.env.VITE_WS_URL
 			|| `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
-		const url = `${base}/ws/${roomName}?token=${encodeURIComponent(token)}`;
+		const botQs = opts?.vsBot
+			? `&bot=1&bot_level=${encodeURIComponent(opts.botLevel ?? 'normal')}`
+			: '';
+		const url = `${base}/ws/${roomName}?token=${encodeURIComponent(token)}${botQs}`;
 		console.log('[ws] connecting to', url);
 		ws = new WebSocket(url);
 
@@ -142,6 +146,10 @@ function handleMessage(data: Record<string, unknown>) {
 		if (hostMatch && hostMatch[1] !== myDisplayName) {
 			oppDisplayName = hostMatch[1];
 			gameState.update((s) => ({ ...s, oppDisplayName: hostMatch[1] }));
+		}
+		if (msg.includes('CPU (solo mode)') || msg.includes('Opponent: CPU')) {
+			oppDisplayName = 'CPU';
+			gameState.update((s) => ({ ...s, oppDisplayName: 'CPU' }));
 		}
 		return;
 	}

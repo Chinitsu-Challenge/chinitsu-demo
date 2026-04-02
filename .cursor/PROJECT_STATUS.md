@@ -6,17 +6,18 @@
 
 | 项 | 内容 |
 |----|------|
-| 最近更新 | 2026-04-03 |
+| 最近更新 | 2026-04-02 |
 | 当前分支 | `feature/clever-chinitsu-bot` |
 | 产品名 | Chinitsu Showdown — 二人实时清一色（仅索子） |
 
 ## 当前阶段（一句话）
 
-基线：**注册/登录 JWT + 房间 WebSocket + 局内流程 + Svelte 前端 + pytest**。**Replay MVP** 已合：导出 JSON、`/replay` 复盘、AsyncAPI 已补 `export_replay` 与 `replayBuildFrames`。本分支名仍可能承载 **AI/Bot** 等后续工作。
+基线：**注册/登录 JWT + 房间 WebSocket + 局内流程 + Svelte 前端 + pytest**。**Replay MVP** 已合。**人机对战 MVP**：首位连接带查询参数 `bot=1`（大厅勾选「Play vs CPU」）即入座 CPU，单人即可 `start`；CPU 启发式（向听、立直概率、和了/跳过荣和）。谱面复盘「哪张切牌最优」可后续用枚举+向听/听牌（无需 RL/LLM）。
 
 ## 进行中
 
-- [ ] （例如：clever bot、谱面分析、联网部署）
+- [ ] 谱面复盘：切牌建议 / 期望和了（枚举+牌理）
+- [ ] 更强 bot（杠、防守、牌效细化）
 
 ## 已完成（可勾选累积）
 
@@ -26,11 +27,12 @@
 - [x] SvelteKit 大厅/对局 UI、牌图资源流程
 - [x] AsyncAPI 文档与调试牌山（`debug_setting.py`）
 - [x] **Replay**：`game.py` 录制、`replay.py` + `POST /api/replay/build-frames`、WS `export_replay`；`/replay` + `ReplayViewer`；局终弹窗双主按钮（New Game / Export）；底栏在 `$agariResult` 打开时隐藏
+- [x] **人机**：`GET /ws/{room}?...&bot=1` + `server/bot_player.py`；`managers` 单连接房间锁 + CPU 链式调度；`game.py` vs_bot 双就绪
 
 ## 下一步（优先级自上而下）
 
-1. （待填）
-2. （待填）
+1. 复盘 UI：逐步展示「若切这张」向听/听牌或简单期望（基于谱面 `initial`+已知墙）
+2. Bot 杠与更细牌效 / 可选难度
 
 ## 已知问题 / 技术债（可选）
 

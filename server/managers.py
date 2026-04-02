@@ -1,10 +1,15 @@
 # pylint: disable=missing-function-docstring, missing-module-docstring, missing-class-docstring, line-too-long, logging-fstring-interpolation
+import asyncio
 import logging
 from typing import List, Dict
 from fastapi import WebSocket
 from game import ChinitsuGame
+from bot_player import choose_bot_action
 
 logger = logging.getLogger("uvicorn")
+
+# Stable id for the CPU seat (never a JWT uuid).
+BOT_CPU_PLAYER_ID = "chinitsu-bot-cpu"
 
 
 class GameManager:
@@ -31,16 +36,38 @@ class ConnectionManager:
         self.connection_owner : Dict[WebSocket, str] = {}
         self.connection_display_name: Dict[WebSocket, str] = {}
         self.game_manager = game_manager
+        self._room_locks: Dict[str, asyncio.Lock] = {}
+        self._bot_tasks: Dict[str, asyncio.Task] = {}
 
-    async def connect(self, websocket: WebSocket, room_name: str, player_id: str, display_name: str = ""):
+    def _lock_for(self, room_name: str) -> asyncio.Lock:
+        if room_name not in self._room_locks:
+            self._room_locks[room_name] = asyncio.Lock()
+        return self._room_locks[room_name]
+
+    async def connect(
+        self,
+        websocket: WebSocket,
+        room_name: str,
+        player_id: str,
+        display_name: str = "",
+        vs_bot: bool = False,
+        bot_level: str = "normal",
+    ):
         if room_name in self.active_connections:
-            if len(self.active_connections[room_name]) >= 2:
+            cur_game = self.game_manager.get_game(room_name)
+            is_bot_room = bool(cur_game and getattr(cur_game, "vs_bot", False))
+            cur_len = len(self.active_connections[room_name])
+            if is_bot_room and cur_len >= 1:
+                err_msg = "room_full"
+                await websocket.accept()
+                await websocket.close(code=1003, reason=err_msg)
+                return False
+            if not is_bot_room and cur_len >= 2:
                 err_msg = "room_full"
                 await websocket.accept()
                 await websocket.close(code=1003, reason=err_msg)  # Room full
                 return False
-            cur_game = self.game_manager.get_game(room_name)
-            if player_id in cur_game.player_ids and not cur_game.is_reconnecting:  # same id but not reconnecting, so duplicate id.
+            if cur_game and player_id in cur_game.player_ids and not cur_game.is_reconnecting:
                 err_msg = "duplicate_id"
                 await websocket.accept()
                 await websocket.close(code=1003, reason=err_msg)
@@ -57,9 +84,23 @@ class ConnectionManager:
         # Initialize game for the first player (host)
         if len(self.active_connections[room_name]) == 1:
             self.game_manager.init_game(room_name)
-            self.game_manager.get_game(room_name).add_player(player_id)
-            self.game_manager.get_game(room_name).set_display_name(player_id, display_name)
-            await self.broadcast(f"Game started in room {room_name}! Host is {display_name}", room_name)
+            g = self.game_manager.get_game(room_name)
+            g.add_player(player_id)
+            g.set_display_name(player_id, display_name)
+            if vs_bot:
+                g.add_player(BOT_CPU_PLAYER_ID)
+                g.set_display_name(BOT_CPU_PLAYER_ID, "CPU")
+                g.vs_bot = True
+                g.bot_player_id = BOT_CPU_PLAYER_ID
+                g.bot_level = bot_level
+                g.set_running()
+                await self.broadcast(
+                    f"Game started in room {room_name}! Host is {display_name}. "
+                    f"Opponent: CPU ({bot_level}).",
+                    room_name,
+                )
+            else:
+                await self.broadcast(f"Game started in room {room_name}! Host is {display_name}", room_name)
         # second player (new or rejoin)
         elif len(self.active_connections[room_name]) == 2:
             cur_game = self.game_manager.get_game(room_name)
@@ -92,6 +133,10 @@ class ConnectionManager:
 
 
             if len(self.active_connections[room_name]) == 0:
+                t = self._bot_tasks.get(room_name)
+                if t is not None and not t.done():
+                    t.cancel()
+                self._bot_tasks.pop(room_name, None)
                 self.game_manager.end_game(room_name)
                 del self.active_connections[room_name]
 
@@ -139,16 +184,59 @@ class ConnectionManager:
                     logger.error(f"Error in send_dict_to: {e}")
                     self.disconnect(connection, room_name, player_id)
 
+    def _schedule_bot(self, room_name: str) -> None:
+        existing = self._bot_tasks.get(room_name)
+        if existing is not None and not existing.done():
+            return
+        task = asyncio.create_task(self._run_bot_chain(room_name))
+        self._bot_tasks[room_name] = task
+
+    async def _run_bot_chain(self, room_name: str) -> None:
+        me = asyncio.current_task()
+        try:
+            async with self._lock_for(room_name):
+                while True:
+                    cur_game = self.game_manager.get_game(room_name)
+                    if not cur_game or not getattr(cur_game, "vs_bot", False):
+                        break
+                    if cur_game.is_ended or not cur_game.is_running:
+                        break
+                    bot_id = cur_game.bot_player_id
+                    if not bot_id:
+                        break
+                    choice = choose_bot_action(cur_game)
+                    if choice is None:
+                        break
+                    result = cur_game.input(choice["action"], choice["card_idx"], bot_id)
+                    if not result or bot_id not in result:
+                        logger.warning("bot input returned empty: %s", choice)
+                        break
+                    if result[bot_id].get("message") != "ok":
+                        logger.warning("bot action rejected: %s -> %s", choice, result.get(bot_id))
+                        break
+                    for connection in self.active_connections.get(room_name, []):
+                        recv_player = self.connection_owner[connection]
+                        if recv_player in result:
+                            await self.send_dict_to(result[recv_player], room_name, recv_player)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("bot chain failed in %s", room_name)
+        finally:
+            if self._bot_tasks.get(room_name) is me:
+                self._bot_tasks.pop(room_name, None)
+
     async def game_action(self, info: dict, room_name: str, player_id: str):
         """
         Take action from clientside input
         """
         if room_name not in self.active_connections:
             return
-        cur_game = self.game_manager.get_game(room_name)
 
         if info.get("action") == "export_replay":
-            payload = cur_game.export_replay() if cur_game else None
+            async with self._lock_for(room_name):
+                cur_game = self.game_manager.get_game(room_name)
+                payload = cur_game.export_replay() if cur_game else None
             base = {"player_id": player_id, "action": "export_replay", "broadcast": False}
             if payload:
                 base["replay"] = payload
@@ -158,14 +246,23 @@ class ConnectionManager:
             await self.send_dict_to(base, room_name, player_id)
             return
 
-        # make the action if both players are connected
-        if len(self.active_connections[room_name]) < 2:
-            logger.info("Game not started or paused in %s", room_name)
-            return
-        card_idx = int(info["card_idx"]) if info["card_idx"].isdigit() else None
-        result = cur_game.input(info["action"], card_idx, player_id)
-        if result:
-            for connection in self.active_connections[room_name]:
-                recv_player = self.connection_owner[connection]
-                if recv_player in result:
-                    await self.send_dict_to(result[recv_player], room_name, recv_player)
+        schedule_bot = False
+        async with self._lock_for(room_name):
+            cur_game = self.game_manager.get_game(room_name)
+            nconn = len(self.active_connections[room_name])
+            if nconn < 2 and not (cur_game and getattr(cur_game, "vs_bot", False)):
+                logger.info("Game not started or paused in %s", room_name)
+                return
+            card_idx = int(info["card_idx"]) if info["card_idx"].isdigit() else None
+            result = cur_game.input(info["action"], card_idx, player_id)
+            if result:
+                for connection in self.active_connections[room_name]:
+                    recv_player = self.connection_owner[connection]
+                    if recv_player in result:
+                        await self.send_dict_to(result[recv_player], room_name, recv_player)
+                ent = result.get(player_id)
+                schedule_bot = bool(ent and ent.get("message") == "ok")
+
+        post = self.game_manager.get_game(room_name)
+        if schedule_bot and post and getattr(post, "vs_bot", False):
+            self._schedule_bot(room_name)

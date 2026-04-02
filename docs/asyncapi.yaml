@@ -43,10 +43,15 @@ channels:
         the same room with the same player_id resumes play.
       - If a room becomes empty, it is destroyed.
 
+      **Query string (implementation: `/ws/{room_name}`):** `token` (JWT, required);
+      optional `bot=1` on the **first** connection only — adds a CPU seat and allows only one human in the room.
+      Optional `bot_level` (effective only with `bot=1`): `easy` / `normal` / `hard` (default `normal`).
+
       **WebSocket close codes:**
       | Code | Reason |
       |------|--------|
       | 1003 | `room_full` — room already has 2 players |
+      | 1003 | `room_full` — vs-CPU room already has its human player |
       | 1003 | `duplicate_id` — player_id already in use in this room |
     parameters:
       room_name:

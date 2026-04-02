@@ -42,10 +42,13 @@ channels:
       - RUNNING 状态下断线，游戏进入 RECONNECT 状态；以相同 player_id 重新加入同一房间可恢复对局。
       - 房间内所有玩家离开后，房间自动销毁。
 
+      **查询参数（实现 URL：`/ws/{room_name}`）：** `token`（JWT，必填）；可选 `bot=1`，仅**首位**连接者有效 — 加入 CPU 座位，且该房间仅允许一名真人玩家。可选 `bot_level`（仅 `bot=1` 时生效）：`easy` / `normal` / `hard`（默认 `normal`）。
+
       **WebSocket 关闭码：**
       | 关闭码 | 原因 |
       |--------|------|
       | 1003 | `room_full` — 房间已有 2 名玩家 |
+      | 1003 | `room_full` — 人机房间已有真人玩家 |
       | 1003 | `duplicate_id` — 该 player_id 已在房间内使用 |
     parameters:
       room_name:

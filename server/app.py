@@ -81,8 +81,25 @@ manager = ConnectionManager(gm)
 app.mount("/assets", StaticFiles(directory=_SERVER_DIR / "assets"), name="assets")
 
 
+def _parse_vs_bot(bot: str) -> bool:
+    return bot.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _parse_bot_level(level: str) -> str:
+    value = (level or "").strip().lower()
+    if value in ("easy", "normal", "hard"):
+        return value
+    return "normal"
+
+
 @app.websocket("/ws/{room_name}")
-async def websocket_endpoint(websocket: WebSocket, room_name: str, token: str = Query("")):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    room_name: str,
+    token: str = Query(""),
+    bot: str = Query(""),
+    bot_level: str = Query("normal"),
+):
     # Validate JWT token
     payload = verify_token(token)
     if payload is None:
@@ -93,7 +110,14 @@ async def websocket_endpoint(websocket: WebSocket, room_name: str, token: str = 
     player_id = payload["uuid"]
     display_name = payload["username"]
 
-    if not await manager.connect(websocket, room_name, player_id, display_name):
+    if not await manager.connect(
+        websocket,
+        room_name,
+        player_id,
+        display_name,
+        vs_bot=_parse_vs_bot(bot),
+        bot_level=_parse_bot_level(bot_level),
+    ):
         return
 
     try:
