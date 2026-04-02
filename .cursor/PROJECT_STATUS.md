@@ -6,21 +6,17 @@
 
 | 项 | 内容 |
 |----|------|
-| 最近更新 | 2026-04-02 |
+| 最近更新 | 2026-04-03 |
 | 当前分支 | `feature/clever-chinitsu-bot` |
 | 产品名 | Chinitsu Showdown — 二人实时清一色（仅索子） |
 
 ## 当前阶段（一句话）
 
-基线已完成：**注册/登录 JWT + 房间 WebSocket + 局内流程（摸切立直杠自摸荣和/流局）+ Svelte 前端 + pytest 集成测试**；本分支名暗示后续可能与「更聪明的 bot / 策略」相关（若尚未实现，见下方「进行中」）。
+基线：**注册/登录 JWT + 房间 WebSocket + 局内流程 + Svelte 前端 + pytest**。**Replay MVP** 已合：导出 JSON、`/replay` 复盘、AsyncAPI 已补 `export_replay` 与 `replayBuildFrames`。本分支名仍可能承载 **AI/Bot** 等后续工作。
 
 ## 进行中
 
-- [ ] （在此填写当前 sprint / 你正在做的事，例如：clever bot、UI、规则调整）
-
-## 最近合并能力（简记）
-
-- [x] **谱面 / Replay（MVP）**：局内录制 `initial + events`，WS `export_replay` 下载 JSON；`POST /api/replay/build-frames` 生成帧；前端 `/replay` 复盘 + 大厅入口；`Game.svelte` 支持只读 replay 显示模式。
+- [ ] （例如：clever bot、谱面分析、联网部署）
 
 ## 已完成（可勾选累积）
 
@@ -29,6 +25,7 @@
 - [x] SQLite 用户表 + JWT WebSocket 鉴权
 - [x] SvelteKit 大厅/对局 UI、牌图资源流程
 - [x] AsyncAPI 文档与调试牌山（`debug_setting.py`）
+- [x] **Replay**：`game.py` 录制、`replay.py` + `POST /api/replay/build-frames`、WS `export_replay`；`/replay` + `ReplayViewer`；局终弹窗双主按钮（New Game / Export）；底栏在 `$agariResult` 打开时隐藏
 
 ## 下一步（优先级自上而下）
 
@@ -39,8 +36,10 @@
 
 - （待填：例如某边界规则、测试缺口、生产 SECRET_KEY 等）
 
-## 给 Agent 的快速路径
+## 给 Agent 快速路径
 
-- 改协议 → `docs/asyncapi.yaml` + `asyncapi.zh.yaml` + 前后端消息处理
+- 改协议 → `docs/asyncapi.yaml` + `asyncapi.zh.yaml` + `ws.ts` / `types.ts`
 - 改规则/番符 → `server/game.py`、`server/agari_judge.py`、`RULES.md`
+- 改谱面格式/重放 → `server/replay.py`、`game.py` 录制、`ReplayViewer.svelte`；协议字段同步 AsyncAPI
 - 只跑后端测试 → 项目根 `uv run pytest -v`
+- 前端改完走 FastAPI 静态站 → `web-svelte` 下 **`npm run build`**

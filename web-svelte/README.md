@@ -40,3 +40,9 @@ npm run build
 You can preview the production build with `npm run preview`.
 
 > To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+
+---
+
+## Chinitsu Showdown（本仓库）
+
+FastAPI 从项目根挂载 **`build/`** 作为站点。改 `src/` 后执行 **`npm run build`** 再在 `http://127.0.0.1:8000/` 验证。复盘页：**`/replay`**（`routes/replay/+page.svelte`）。

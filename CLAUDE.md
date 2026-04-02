@@ -67,7 +67,7 @@ Browser (SvelteKit) ──WebSocket──▶ app.py (routes) + managers.py (Conn
 
 ### Backend (`server/`)
 
-- **`app.py`** — FastAPI app, routes (HTTP auth + WebSocket endpoint at `/ws/{room_name}`), static file mounts (`/assets`, `/api-docs`, `/`).
+- **`app.py`** — FastAPI app, HTTP auth, `POST /api/replay/build-frames`, WebSocket at `/ws/{room_name}`, static mounts (`/assets`, `/api-docs`, `/`).
 - **`managers.py`** — `GameManager` owns in-memory game rooms; `ConnectionManager` routes messages and handles disconnect/reconnect (game enters `RECONNECT` state when a player drops).
 - **`game.py`** — Core engine. `ChinitsuGame` tracks game state (`WAITING=0`, `RUNNING=1`, `RECONNECT=2`, `ENDED=3`) and turn state (`BEFORE_DRAW=1`, `AFTER_DRAW=2`, `AFTER_DISCARD=3`). `ChinitsuPlayer` holds hand, kawa, fuuro, riichi/ippatsu/furiten flags. The `input(action, card_idx, player_id)` method is the single entry point for all player actions.
 - **`agari_judge.py`** — Wraps `python-mahjong`'s `HandCalculator` to validate winning hands and compute han/fu/points.
@@ -79,7 +79,7 @@ Browser (SvelteKit) ──WebSocket──▶ app.py (routes) + managers.py (Conn
 - **`lib/ws.ts`** — WebSocket client wrapper; all server communication goes through here.
 - **`lib/types.ts`** — Shared TypeScript types for game state.
 - **`routes/+page.svelte`** — Single page that switches between lobby and game views.
-- **`lib/components/`** — UI components: `Game`, `Lobby`, `Hand`, `OpponentHand`, `Kawa`, `Fuuro`, `Tile`, `AgariOverlay`, `MessageLog`.
+- **`lib/components/`** — `Game`, `Lobby`, `ReplayViewer`, `Hand`, `OpponentHand`, `Kawa`, `Fuuro`, `Tile`, `AgariOverlay`, `MessageLog`; route `routes/replay/+page.svelte` for offline scrubber.
 
 Vite proxies `/ws` → `ws://localhost:8000` and `/assets` → `http://localhost:8000` during development.
 
@@ -98,15 +98,23 @@ Back tiles (`back_*.png`) follow the same numbering but rotation 0 is used for b
 
 After any frontend change, run `npm run build` from `web-svelte/` before testing through FastAPI.
 
+### Replay (谱面)
+
+- **`server/replay.py`** — `build_frames(replay_json)` re-simulates a saved round from `initial` + `events` for the scrub UI.
+- **`server/game.py`** — Records `initial` snapshot after deal and appends each successful action to `events`; `export_replay()` returns the JSON payload.
+- **HTTP:** `POST /api/replay/build-frames` — body = full replay JSON → `{ "frames": [...] }`.
+- **WebSocket:** `export_replay` (empty `card_idx`) — response includes `replay` when a round has been recorded; client downloads JSON.
+- **Frontend:** `routes/replay/+page.svelte`, `lib/components/ReplayViewer.svelte`, `lib/replayView.ts`; lobby links to `/replay`. Round-end controls (**New Game**, **Export replay**) live in `AgariOverlay`; the action bar stays hidden while `$agariResult` is set.
+
 ### WebSocket Protocol
 
 Client sends: `{"action": "string", "card_idx": "string"}`
 
-Actions: `start`, `start_new`, `draw`, `discard`, `riichi`, `kan`, `tsumo`, `ron`, `skip_ron`
+Actions: `start`, `start_new`, `draw`, `discard`, `riichi`, `kan`, `tsumo`, `ron`, `skip_ron`, `export_replay`
 
-Server responds per-player with full game state (hand, kawa, fuuro, points, turn info). Winning responses include `agari`, `han`, `fu`, `point`, `yaku` fields.
+Server responds per-player with full game state (hand, kawa, fuuro, points, turn info). Winning responses include `agari`, `han`, `fu`, `point`, `yaku` fields. `export_replay` success adds a `replay` object.
 
-No authentication — player identity is the `player_id` path parameter (max 20 chars). Room capacity is 2 players; connecting to a full room closes with code `1003`.
+Authentication: JWT via `?token=` on the WebSocket URL (see `/api/register`, `/api/login`). Room capacity is 2 players; connecting to a full room closes with code `1003`.
 
 ### Default Game Rules (`game.py`)
 

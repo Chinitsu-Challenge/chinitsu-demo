@@ -45,9 +45,11 @@ Client WebSocket → app.py (routes) + managers.py (ConnectionManager) → game.
 
 ### Key Files
 
-- **`app.py`** — FastAPI app, HTTP auth routes (`/api/register`, `/api/login`), WebSocket endpoint at `/ws/{room_name}`, static file mounts.
+- **`app.py`** — FastAPI app, HTTP auth (`/api/register`, `/api/login`), `POST /api/replay/build-frames`, WebSocket at `/ws/{room_name}`, static file mounts.
 
-- **`managers.py`** — `GameManager` owns in-memory game rooms; `ConnectionManager` routes messages and handles disconnect/reconnect.
+- **`managers.py`** — `GameManager` / `ConnectionManager`; handles `export_replay`, sets `set_display_name` on connect.
+
+- **`replay.py`** — `build_frames()` hydrates `ChinitsuGame` from recorded `initial` + `events` and returns per-step UI frames.
 
 - **`game.py`** — Core game engine. `ChinitsuGame` manages game state (WAITING=0, RUNNING=1, RECONNECT=2, ENDED=3), the wall (yama), turns, and action processing (draw, discard, kan, riichi, tsumo, ron). `ChinitsuPlayer` holds per-player state (hand, points, flags).
 
@@ -57,7 +59,7 @@ Client WebSocket → app.py (routes) + managers.py (ConnectionManager) → game.
 
 ### Communication Protocol
 
-Clients send JSON messages with an `action` field. The server responds with game state updates broadcast to all players in the room. Player identity comes from JWT tokens passed as a query parameter on the WebSocket URL.
+Clients send JSON messages with an `action` field. The server responds with game state updates per player in the room. Player identity comes from JWT tokens on the WebSocket URL (`?token=`). Replay export: `export_replay`; offline viewer posts the JSON to `/api/replay/build-frames`.
 
 ### Dependencies
 

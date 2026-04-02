@@ -19,6 +19,7 @@
 - [游戏流程](#游戏流程)
 - [配置说明](#配置说明)
 - [调试模式](#调试模式)
+- [谱面与复盘（Replay）](#谱面与复盘replay)
 
 ---
 
@@ -423,6 +424,13 @@ ws://{host}:{port}/ws/{room_name}?token={jwt_token}
 - **响应**：确认消息
 - **说明**：放弃荣和机会，若已立直则支付供托
 
+#### `export_replay` — 导出谱面 JSON
+
+- **阶段**：任意（完成过至少一次发牌后才有数据）
+- **参数**：`card_idx` 留空即可
+- **响应**：`message: ok` 时附带 `replay` 对象（`version`、`initial`、`events`、`display_names`）；未发牌过则为 `no_replay_available`
+- **说明**：**一小局**一份（从本局发牌到和牌 / 错和 / 流局）；可先导出再点「新局」，顺序不限
+
 ### 错误码
 
 | 错误消息 | 说明 |
@@ -439,6 +447,7 @@ ws://{host}:{port}/ws/{room_name}?token={jwt_token}
 | `room_full` | 房间已满（2 人） |
 | `duplicate_id` | 重复的玩家 ID |
 | `not_enough_players` | 玩家不足无法开始 |
+| `no_replay_available` | 尚未有可导出的谱面（如未开局） |
 
 **WebSocket 关闭码**：
 
@@ -446,6 +455,15 @@ ws://{host}:{port}/ws/{room_name}?token={jwt_token}
 |--------|------|
 | `1003` | 连接被拒（`room_full` 或 `duplicate_id`） |
 | `1008` | token 无效或已过期，需重新登录 |
+
+---
+
+## 谱面与复盘（Replay）
+
+- **导出**：局终结算弹窗内 **Export replay** 会触发 `export_replay`，浏览器下载 `.json`（与 **New Game** 同级，可先下载再开新局）。
+- **回放页**：浏览器打开 `http://127.0.0.1:8000/replay`（生产需先 `web-svelte` 下执行 `npm run build`），选择导出的 JSON；前端会 `POST /api/replay/build-frames` 拉取时间轴帧并复盘。
+- **HTTP**：`POST /api/replay/build-frames`，请求体为完整 replay JSON，响应 `{ "frames": [...] }`（无需登录，适合本地/内网工具）。
+- **实现位置**：服务端 `server/replay.py`、`game.py` 录制逻辑；前端 `ReplayViewer.svelte`、`replayView.ts`、`routes/replay/+page.svelte`。
 
 ---
 
