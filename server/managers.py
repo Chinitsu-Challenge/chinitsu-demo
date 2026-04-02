@@ -5,8 +5,25 @@
 import logging
 from fastapi import WebSocket
 from room.room_manager import RoomManager
-
+from game import ChinitsuGame
 logger = logging.getLogger("uvicorn")
+
+class GameManager:
+    def __init__(self) -> None:
+        self.games = dict()
+
+    def init_game(self, room_name):
+        if room_name not in self.games:
+            self.games[room_name] = ChinitsuGame()
+            return True
+        return False  # Game already started
+
+    def end_game(self, room_name):
+        if room_name in self.games:
+            del self.games[room_name]
+
+    def get_game(self, room_name) -> ChinitsuGame:
+        return self.games.get(room_name, None)
 
 
 class ConnectionManager:
