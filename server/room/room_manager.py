@@ -782,17 +782,21 @@ class RoomManager:
         if redis is None:
             return
         try:
-            # 合并 room.player_ids 与 sessions.keys()：
-            # 两者取并集确保在大厅断线（已从 player_ids 移除但 session key 还留在 Redis）
-            # 的玩家记录也能被正确清除。
+            # 从内存中收集玩家 ID（RUNNING 状态下玩家仍在内存中）
             room = self.rooms.get(room_name)
             from_room = set(room.player_ids if room else [])
             from_sessions = set(self.sessions.get(room_name, {}).keys())
             player_ids = from_room | from_sessions
 
-            keys_to_delete = [f"room:{room_name}", f"snapshot:{room_name}"]
+            keys_to_delete: set[str] = {f"room:{room_name}", f"snapshot:{room_name}"}
             for pid in player_ids:
-                keys_to_delete.append(f"player_session:{room_name}:{pid}")
+                keys_to_delete.add(f"player_session:{room_name}:{pid}")
+
+            # 扫描 Redis 查找所有属于该房间的 player_session 残留 key。
+            # WAITING/ENDED 断线时 _remove_player_from_room() 会提前清空内存，
+            # 此时内存已无法提供玩家 ID，靠 SCAN 兜底保证清除完整。
+            async for key in redis.scan_iter(f"player_session:{room_name}:*"):
+                keys_to_delete.add(key)
 
             if keys_to_delete:
                 await redis.delete(*keys_to_delete)
