@@ -77,6 +77,16 @@ channels:
           - $ref: '#/components/messages/BroadcastMessage'
           - $ref: '#/components/messages/GameStateUpdate'
 
+  replayBuildFrames:
+    description: |
+      POST 提交谱面 JSON（`version`、`initial`、`events`，可选 `display_names`）；
+      响应为 `{ "frames": [ ... ] }`，供网页复盘控件使用。
+    bindings:
+      http:
+        type: request
+        method: POST
+        path: /api/replay/build-frames
+
 components:
   messages:
 
@@ -139,6 +149,7 @@ components:
         | tsumo       | AFTER_DRAW    | 当前玩家 | 自摸和牌 |
         | ron         | AFTER_DISCARD | 对手     | 荣和对手打出的牌 |
         | skip_ron    | AFTER_DISCARD | 对手     | 放弃荣和机会 |
+        | export_replay | 任意      | 任意     | 导出 JSON 谱面（至少完成一次发牌后；成功时响应含 `replay`） |
       enum:
         - start
         - start_new
@@ -149,6 +160,7 @@ components:
         - tsumo
         - ron
         - skip_ron
+        - export_replay
 
     # ── 服务端 → 客户端 ────────────────────────────────────────────────────────
 
@@ -275,6 +287,11 @@ components:
           items:
             type: string
           example: ['Chinitsu', 'Riichi']
+        replay:
+          type: object
+          description: |
+            当 `action` 为 `export_replay` 且 `message` 为 `ok` 时出现。
+            序列化谱面（`version`、`initial`、`events`、`display_names`），可提交至 `POST /api/replay/build-frames`。
 
     ErrorCode:
       type: string
@@ -295,6 +312,7 @@ components:
         | room_full            | 房间已满（同时以 WS 关闭码 1003 发送） |
         | duplicate_id         | player_id 已被占用（同时以 WS 关闭码 1003 发送） |
         | not_enough_players   | 玩家不足，无法开始游戏 |
+        | no_replay_available  | `export_replay` 时尚无已发牌的谱面数据 |
       enum:
         - not_your_turn
         - not_opponent_turn
@@ -308,3 +326,4 @@ components:
         - room_full
         - duplicate_id
         - not_enough_players
+        - no_replay_available

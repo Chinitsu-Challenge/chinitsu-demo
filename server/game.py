@@ -1,5 +1,6 @@
 # pylint: disable=missing-function-docstring, missing-module-docstring, missing-class-docstring, line-too-long
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Any, Optional
+import copy
 import random, time, logging
 from agari_judge import AgariJudger, HandResponse, get_tenpai_tiles
 from debug_setting import debug_yama
@@ -141,14 +142,25 @@ class ChinitsuGame:
         self.tsumi_number = 0
         self.next_oya = None   # set after each round; None = randomize
         self._ready = set()    # tracks which players clicked start_new
+        self._replay_events: List[Dict[str, Any]] = []
+        self._replay_initial: Optional[Dict[str, Any]] = None
+        self._display_names: Dict[str, str] = {}
         self.set_rules(rules)
+
+    def set_display_name(self, player_id: str, display_name: str) -> None:
+        if display_name:
+            self._display_names[player_id] = display_name
 
     def set_rules(self, rules: dict):
 
         self.rules = default_rules
         if rules is not None:
             self.rules.update(rules)
-        self.agari_judger = AgariJudger(self.rules['yaku_rules'])
+        yr = self.rules["yaku_rules"]
+        self.agari_judger = AgariJudger(
+            has_daisharin=bool(yr.get("has_daisharin", False)),
+            renhou_as_yakuman=bool(yr.get("renhou_as_yakuman", False)),
+        )
 
     @property
     def player_ids(self):
@@ -264,6 +276,53 @@ class ChinitsuGame:
             raise ValueError(player_name)
         self._players.pop(player_name)
 
+    def _snapshot_for_replay(self) -> Dict[str, Any]:
+        pids = self.player_ids
+        return {
+            "version": 1,
+            "player_ids": list(pids),
+            "rules": copy.deepcopy(self.rules),
+            "yama": list(self.yama),
+            "hands": {pid: list(self._players[pid].hand) for pid in pids},
+            "fuuro": {pid: [list(t) for t in self._players[pid].fuuro] for pid in pids},
+            "kawa": {pid: [[c, ri] for c, ri in self._players[pid].kawa] for pid in pids},
+            "points": {pid: self._players[pid].point for pid in pids},
+            "is_oya": {pid: self._players[pid].is_oya for pid in pids},
+            "player_flags": {
+                pid: {
+                    "is_riichi": self._players[pid].is_riichi,
+                    "is_daburu_riichi": self._players[pid].is_daburu_riichi,
+                    "riichi_turn": self._players[pid].riichi_turn,
+                    "is_ippatsu": self._players[pid].is_ippatsu,
+                    "is_rinshan": self._players[pid].is_rinshan,
+                    "is_furiten": self._players[pid].is_furiten,
+                    "is_temp_furiten": self._players[pid].is_temp_furiten,
+                }
+                for pid in pids
+            },
+            "kyoutaku_number": self.kyoutaku_number,
+            "tsumi_number": self.tsumi_number,
+            "next_oya": self.next_oya,
+            "turn_state": {
+                "current_player": self.state.current_player,
+                "turn": self.state.turn,
+                "stage": self.state.stage,
+            },
+            "status": self.status,
+        }
+
+    def _capture_replay_initial(self) -> None:
+        self._replay_initial = self._snapshot_for_replay()
+
+    def export_replay(self) -> Optional[Dict[str, Any]]:
+        if self._replay_initial is None:
+            return None
+        return {
+            "version": 1,
+            "initial": self._replay_initial,
+            "events": list(self._replay_events),
+            "display_names": dict(self._display_names),
+        }
 
     def input(self, action: str, card_idx: int, player_id: str) -> bool:
 
@@ -298,6 +357,8 @@ class ChinitsuGame:
 
             self.start_new_game(debug_code=debug_code)
             self.state.next()  # oya does not need to draw, set to after_draw
+            self._replay_events = []
+            self._capture_replay_initial()
             res = {player_id: {"message": "ok"}}
             for name, p in self._players.items():
                 if name not in res:
@@ -552,5 +613,14 @@ class ChinitsuGame:
             if p_id not in res:
                 res[p_id] = {}
             res[p_id].update(public_info)
+
+        if action not in ("start", "start_new") and self._replay_initial is not None:
+            if player_id in res and res[player_id].get("message") == "ok":
+                rec_idx: Optional[int] = None
+                if action in ("discard", "riichi", "kan") and card_idx is not None:
+                    rec_idx = card_idx
+                self._replay_events.append(
+                    {"player_id": player_id, "action": action, "card_idx": rec_idx}
+                )
 
         return res

@@ -55,6 +55,10 @@
 			/>
 		</div>
 		<button class="btn btn-primary" disabled={connecting} onclick={handleConnect}>Connect</button>
+		<p class="replay-link">
+			<a href="/replay">Open replay viewer</a>
+			<span class="replay-hint">— load an exported JSON after a round</span>
+		</p>
 		{#if status}
 			<p class="status-msg">{status}</p>
 		{/if}
@@ -82,5 +86,16 @@
 	}
 	.link-btn:hover {
 		color: #81d4fa;
+	}
+	.replay-link {
+		margin-top: 1rem;
+		font-size: 0.9rem;
+	}
+	.replay-link a {
+		color: #4fc3f7;
+	}
+	.replay-hint {
+		color: #888;
+		font-size: 0.85rem;
 	}
 </style>

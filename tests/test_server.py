@@ -310,3 +310,60 @@ class TestGameplay:
         oya_id = oya_reply["player_id"]
         last_kawa_entry = oya_reply["kawa"][oya_id][-1]
         assert last_kawa_entry[1] is True  # (tile, is_riichi=True)
+
+
+# ---------------------------------------------------------------------------
+# Replay
+# ---------------------------------------------------------------------------
+
+
+class TestReplay:
+    def test_export_replay_after_round(self, client):
+        with _room(client) as (ws1, ws2, _room_name):
+            ws_oya, ws_ko = _start(ws1, ws2, debug_code=_DEBUG_TSUMO)
+            ws_oya.send_json({"action": "tsumo", "card_idx": ""})
+            ws_oya.receive_json()
+            ws_ko.receive_json()
+
+            ws_oya.send_json({"action": "export_replay", "card_idx": ""})
+            msg = ws_oya.receive_json()
+
+        assert msg.get("message") == "ok"
+        assert "replay" in msg
+        rep = msg["replay"]
+        assert rep.get("version") == 1
+        assert "initial" in rep and "events" in rep
+        assert isinstance(rep["events"], list)
+        assert len(rep["events"]) >= 1
+
+    def test_build_frames_http(self, client):
+        with _room(client) as (ws1, ws2, _room_name):
+            ws_oya, ws_ko = _start(ws1, ws2, debug_code=_DEBUG_TSUMO)
+            ws_oya.send_json({"action": "tsumo", "card_idx": ""})
+            ws_oya.receive_json()
+            ws_ko.receive_json()
+            ws_oya.send_json({"action": "export_replay", "card_idx": ""})
+            msg = ws_oya.receive_json()
+            rep = msg["replay"]
+
+        resp = client.post("/api/replay/build-frames", json=rep)
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert "frames" in data
+        assert len(data["frames"]) >= 2
+        assert data["frames"][0]["step"] == 0
+        assert "hands" in data["frames"][0]
+
+    def test_export_replay_before_start_returns_error(self, client):
+        room = _uid()
+        t1 = _register(client, "p1_" + _uid())
+        t2 = _register(client, "p2_" + _uid())
+        with client.websocket_connect(f"/ws/{room}?token={t1}") as ws1:
+            ws1.receive_json()
+            with client.websocket_connect(f"/ws/{room}?token={t2}") as ws2:
+                ws1.receive_json()
+                ws2.receive_json()
+                ws1.send_json({"action": "export_replay", "card_idx": ""})
+                msg = ws1.receive_json()
+        assert msg.get("message") == "no_replay_available"
+        assert "replay" not in msg

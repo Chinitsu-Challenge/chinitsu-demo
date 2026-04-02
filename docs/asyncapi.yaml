@@ -78,6 +78,16 @@ channels:
           - $ref: '#/components/messages/BroadcastMessage'
           - $ref: '#/components/messages/GameStateUpdate'
 
+  replayBuildFrames:
+    description: |
+      POST a replay JSON body (`version`, `initial`, `events`, optional `display_names`)
+      exported from the game; response is `{ "frames": [ ... ] }` for the replay viewer UI.
+    bindings:
+      http:
+        type: request
+        method: POST
+        path: /api/replay/build-frames
+
 components:
   messages:
 
@@ -142,6 +152,7 @@ components:
         | tsumo       | AFTER_DRAW    | current      | Self-draw win |
         | ron         | AFTER_DISCARD | opponent     | Win on opponent's discard |
         | skip_ron    | AFTER_DISCARD | opponent     | Pass on ron opportunity |
+        | export_replay | any         | any          | Download JSON replay after at least one dealt round (`replay` in response when ok) |
       enum:
         - start
         - start_new
@@ -152,6 +163,7 @@ components:
         - tsumo
         - ron
         - skip_ron
+        - export_replay
 
     # ── Server → Client ────────────────────────────────────────────────────────
 
@@ -278,6 +290,11 @@ components:
           items:
             type: string
           example: ['Chinitsu', 'Riichi']
+        replay:
+          type: object
+          description: |
+            Present when `action` is `export_replay` and `message` is `ok`.
+            Serialized replay (`version`, `initial`, `events`, `display_names`) for the replay viewer or `POST /api/replay/build-frames`.
 
     ErrorCode:
       type: string
@@ -298,6 +315,7 @@ components:
         | room_full            | Room already has 2 players (also sent as WS close code 1003) |
         | duplicate_id         | player_id already taken in this room (also WS close 1003) |
         | not_enough_players   | Start attempted with fewer than 2 players |
+        | no_replay_available  | `export_replay` when no deal has been recorded yet |
       enum:
         - not_your_turn
         - not_opponent_turn
@@ -311,3 +329,4 @@ components:
         - room_full
         - duplicate_id
         - not_enough_players
+        - no_replay_available

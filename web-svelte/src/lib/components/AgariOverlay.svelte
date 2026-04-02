@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { agariResult, sendAction, gameState, getMyId, getOppId } from '$lib/ws';
+	import { agariResult, sendAction, getMyId, getOppId } from '$lib/ws';
 
 	let result = $derived($agariResult);
 	let myId = $derived(getMyId());
@@ -8,6 +8,10 @@
 	function startNewGame() {
 		agariResult.set(null);
 		sendAction('start_new');
+	}
+
+	function exportReplay() {
+		sendAction('export_replay');
 	}
 </script>
 
@@ -75,7 +79,33 @@
 					<div class="point-val" style="color:var(--danger)">{Math.abs(result.point).toLocaleString()} pts penalty</div>
 				</div>
 			{/if}
-			<button class="btn btn-primary" onclick={startNewGame}>New Game</button>
+			<div class="overlay-cta">
+				<button class="btn btn-primary overlay-cta-btn" type="button" onclick={startNewGame}>New Game</button>
+				<button class="btn btn-primary overlay-cta-btn" type="button" onclick={exportReplay}>Export replay</button>
+			</div>
 		</div>
 	</div>
 {/if}
+
+<style>
+	.overlay-cta {
+		display: flex;
+		flex-direction: row;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 1rem;
+		margin-top: 1.75rem;
+		width: 100%;
+		max-width: 560px;
+		margin-left: auto;
+		margin-right: auto;
+	}
+	.overlay-cta-btn {
+		flex: 1 1 220px;
+		min-width: min(100%, 200px);
+		padding: 16px 22px;
+		font-size: 1.15rem;
+		font-weight: 700;
+		border-radius: 12px;
+	}
+</style>

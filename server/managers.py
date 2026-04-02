@@ -58,15 +58,18 @@ class ConnectionManager:
         if len(self.active_connections[room_name]) == 1:
             self.game_manager.init_game(room_name)
             self.game_manager.get_game(room_name).add_player(player_id)
+            self.game_manager.get_game(room_name).set_display_name(player_id, display_name)
             await self.broadcast(f"Game started in room {room_name}! Host is {display_name}", room_name)
         # second player (new or rejoin)
         elif len(self.active_connections[room_name]) == 2:
             cur_game = self.game_manager.get_game(room_name)
             if cur_game.is_reconnecting:
                 cur_game.activate_player(player_id)
+                cur_game.set_display_name(player_id, display_name)
                 await self.broadcast(f"{display_name} rejoins {room_name}.", room_name)
             else:
                 cur_game.add_player(player_id)
+                cur_game.set_display_name(player_id, display_name)
                 cur_game.set_running()
                 logger.info(f"Game started in room {room_name}!")
                 host_ws = next(ws for ws in self.active_connections[room_name] if self.connection_owner[ws] != player_id)
@@ -143,6 +146,18 @@ class ConnectionManager:
         if room_name not in self.active_connections:
             return
         cur_game = self.game_manager.get_game(room_name)
+
+        if info.get("action") == "export_replay":
+            payload = cur_game.export_replay() if cur_game else None
+            base = {"player_id": player_id, "action": "export_replay", "broadcast": False}
+            if payload:
+                base["replay"] = payload
+                base["message"] = "ok"
+            else:
+                base["message"] = "no_replay_available"
+            await self.send_dict_to(base, room_name, player_id)
+            return
+
         # make the action if both players are connected
         if len(self.active_connections[room_name]) < 2:
             logger.info("Game not started or paused in %s", room_name)

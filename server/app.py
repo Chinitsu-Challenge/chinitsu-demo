@@ -11,6 +11,7 @@ from database import init_db
 from auth import verify_token, register_user, authenticate_user
 from models import RegisterRequest, LoginRequest, TokenResponse
 from managers import GameManager, ConnectionManager
+from replay import build_frames
 
 
 @asynccontextmanager
@@ -55,6 +56,17 @@ async def api_login(req: LoginRequest):
         )
     except ValueError as e:
         return JSONResponse(status_code=401, content={"detail": str(e)})
+
+
+@app.post("/api/replay/build-frames")
+async def api_replay_build_frames(payload: dict):
+    """Accept a replay JSON (version/initial/events) and return scrubbable frames for the viewer."""
+    try:
+        frames = build_frames(payload)
+        return {"frames": frames}
+    except (ValueError, KeyError, TypeError) as e:
+        logger.warning("replay build-frames failed: %s", e)
+        return JSONResponse(status_code=400, content={"detail": str(e)})
 
 
 # Path configuration

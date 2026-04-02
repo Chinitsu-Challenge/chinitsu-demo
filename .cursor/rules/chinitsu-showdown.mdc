@@ -1,0 +1,26 @@
+---
+description: Chinitsu Showdown 项目上下文、命令与进度跟踪约定
+alwaysApply: true
+---
+
+# Chinitsu Showdown（清一色双人麻将）
+
+## 进度来源（必读）
+
+进行**实质性开发或规划**前，先读仓库根目录旁的 **`.cursor/PROJECT_STATUS.md`**，按其中「当前阶段 / 进行中 / 下一步」行动。完成可交付里程碑后，**在同一轮对话里更新该文件**（日期、阶段、勾选项），便于后续 chat 接续。
+
+## 权威文档（按需打开）
+
+| 用途 | 路径 |
+|------|------|
+| 命令与架构 | `CLAUDE.md`（根目录）、`server/CLAUDE.md` |
+| 游戏规则 | `RULES.md` |
+| 用户向说明与 WS 说明 | `README.md` |
+| 协议变更 | 同步改 `docs/asyncapi.yaml` 与 `docs/asyncapi.zh.yaml` |
+
+## 约定
+
+- 后端：`server/`（`game.py` 引擎，`managers.py` 房间/WS，`agari_judge.py` 和牌）。
+- 前端：`web-svelte/`；改 WS 载荷时对齐 `src/lib/types.ts` 与 `ws.ts`。
+- 依赖：`uv sync`；测试：根目录 `uv run pytest -v`。
+- 勿在规则里重复长文；细节以 `PROJECT_STATUS.md` 与上述文件为准。

@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "initial": {
+    "version": 1,
+    "player_ids": [
+      "75841b6f-8eda-4dbd-a14b-e769b989f24d",
+      "a73bf454-f9b0-4148-9167-3a88b20a2c72"
+    ],
+    "rules": {
+      "initial_point": 150000,
+      "no_agari_punishment": 20000,
+      "sort_hand": false,
+      "yaku_rules": {
+        "has_daisharin": false,
+        "renhou_as_yakuman": false
+      }
+    },
+    "yama": [
+      "6s",
+      "8s",
+      "7s",
+      "8s",
+      "8s",
+      "1s",
+      "9s",
+      "5s",
+      "3s"
+    ],
+    "hands": {
+      "75841b6f-8eda-4dbd-a14b-e769b989f24d": [
+        "3s",
+        "6s",
+        "9s",
+        "4s",
+        "5s",
+        "7s",
+        "6s",
+        "1s",
+        "8s",
+        "2s",
+        "5s",
+        "9s",
+        "9s",
+        "4s"
+      ],
+      "a73bf454-f9b0-4148-9167-3a88b20a2c72": [
+        "4s",
+        "7s",
+        "1s",
+        "7s",
+        "1s",
+        "3s",
+        "2s",
+        "4s",
+        "3s",
+        "2s",
+        "6s",
+        "5s",
+        "2s"
+      ]
+    },
+    "fuuro": {
+      "75841b6f-8eda-4dbd-a14b-e769b989f24d": [],
+      "a73bf454-f9b0-4148-9167-3a88b20a2c72": []
+    },
+    "kawa": {
+      "75841b6f-8eda-4dbd-a14b-e769b989f24d": [],
+      "a73bf454-f9b0-4148-9167-3a88b20a2c72": []
+    },
+    "points": {
+      "75841b6f-8eda-4dbd-a14b-e769b989f24d": 150000,
+      "a73bf454-f9b0-4148-9167-3a88b20a2c72": 150000
+    },
+    "is_oya": {
+      "75841b6f-8eda-4dbd-a14b-e769b989f24d": true,
+      "a73bf454-f9b0-4148-9167-3a88b20a2c72": false
+    },
+    "player_flags": {
+      "75841b6f-8eda-4dbd-a14b-e769b989f24d": {
+        "is_riichi": false,
+        "is_daburu_riichi": false,
+        "riichi_turn": null,
+        "is_ippatsu": false,
+        "is_rinshan": false,
+        "is_furiten": false,
+        "is_temp_furiten": false
+      },
+      "a73bf454-f9b0-4148-9167-3a88b20a2c72": {
+        "is_riichi": false,
+        "is_daburu_riichi": false,
+        "riichi_turn": null,
+        "is_ippatsu": false,
+        "is_rinshan": false,
+        "is_furiten": false,
+        "is_temp_furiten": false
+      }
+    },
+    "kyoutaku_number": 0,
+    "tsumi_number": 0,
+    "next_oya": null,
+    "turn_state": {
+      "current_player": "75841b6f-8eda-4dbd-a14b-e769b989f24d",
+      "turn": 1,
+      "stage": 2
+    },
+    "status": 1
+  },
+  "events": [
+    {
+      "player_id": "75841b6f-8eda-4dbd-a14b-e769b989f24d",
+      "action": "tsumo",
+      "card_idx": null
+    }
+  ],
+  "display_names": {
+    "75841b6f-8eda-4dbd-a14b-e769b989f24d": "Vulpisfoglia",
+    "a73bf454-f9b0-4148-9167-3a88b20a2c72": "luckyhan"
+  }
+}

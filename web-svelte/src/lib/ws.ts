@@ -146,6 +146,24 @@ function handleMessage(data: Record<string, unknown>) {
 		return;
 	}
 
+	if (data.action === 'export_replay') {
+		if (data.replay) {
+			const blob = new Blob([JSON.stringify(data.replay, null, 2)], {
+				type: 'application/json'
+			});
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `chinitsu-replay-${Date.now()}.json`;
+			a.click();
+			URL.revokeObjectURL(url);
+			logMsg('Replay file downloaded.', 'broadcast');
+		} else if (data.message !== 'ok') {
+			logMsg(`[export_replay] ${String(data.message)}`, 'error');
+		}
+		return;
+	}
+
 	// Waiting for the other player to also click start
 	if (data.message === 'waiting_for_opponent') {
 		gameState.update((s) => ({ ...s, phase: 'waiting_new_game' }));

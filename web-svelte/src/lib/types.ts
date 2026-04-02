@@ -39,3 +39,29 @@ export interface AgariData {
 	hand?: string[];
 	tenpai?: Record<string, TenpaiInfo>;
 }
+
+/** One scrub step from POST /api/replay/build-frames */
+export interface ReplayFrame {
+	step: number;
+	last_event: { player_id: string; action: string; card_idx: number | null } | null;
+	wall_count: number;
+	kyoutaku_number: number;
+	current_player: string;
+	turn_stage: 'before_draw' | 'after_draw' | 'after_discard';
+	phase: 'playing' | 'ended';
+	hands: Record<string, string[]>;
+	kawa: Record<string, [string, boolean][]>;
+	fuuro: Record<string, string[][]>;
+	balances: Record<string, number>;
+	is_oya: Record<string, boolean>;
+	riichi: Record<string, boolean>;
+	player_ids: string[];
+	display_names: Record<string, string>;
+	agari?: boolean;
+	han?: number;
+	fu?: number;
+	yaku?: string[];
+	ryukyoku?: boolean;
+	tenpai?: Record<string, TenpaiInfo>;
+	agari_point?: number;
+}
