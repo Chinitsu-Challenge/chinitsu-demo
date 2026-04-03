@@ -87,6 +87,7 @@ class ChinitsuPlayer:
             return False
         self.hand = [card for card in self.hand if card != kan_card]
         self.fuuro.append((kan_card, kan_card, kan_card, kan_card))
+        self.num_kan += 1
         return True
 
     def get_info(self):
@@ -360,8 +361,8 @@ class ChinitsuGame:
 
             rinshan_card = self.draw_from_rinshan(player_id)
             # cancel ippatsu of all players after kan
-            for _, p in self._players.items():
-                p.is_ippatsu = False
+            for _, pl in self._players.items():
+                pl.is_ippatsu = False
 
             res = {player_id: {"message": "ok", "hand": p.hand}}
 
@@ -459,7 +460,7 @@ class ChinitsuGame:
             if not self.state.is_after_draw:
                 res = {player_id: {"message": "illegal_tsumo"}}
                 return res
-            if p.len_hand + p.num_fuuro * 4 != 14:
+            if p.len_hand + p.num_fuuro * 3 != 14:
                 res = {player_id: {"message": f"incorrect_card_count: {p.len_hand} + {p.num_fuuro} fuuros"}}
                 return res
 
@@ -489,7 +490,7 @@ class ChinitsuGame:
             if not self.state.is_after_discard:
                 res = {player_id: {"message": "illegal_ron"}}
                 return res
-            if p.len_hand + p.num_fuuro * 4 != 13:
+            if p.len_hand + p.num_fuuro * 3 != 13:
                 res = {player_id: {"message": f"incorrect_card_count: {p.len_hand} + {p.num_fuuro} fuuros"}}
                 return res
 
