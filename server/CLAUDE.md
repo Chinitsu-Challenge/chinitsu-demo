@@ -47,12 +47,14 @@ Client WebSocket → app.py (routes) + managers.py (ConnectionManager) → game.
 
 - **`app.py`** — FastAPI app, HTTP auth (`/api/register`, `/api/login`), `POST /api/replay/build-frames`, WebSocket at `/ws/{room_name}`, static file mounts.
 
-- **`managers.py`** — `GameManager` / `ConnectionManager`; handles `export_replay`, `set_display_name`, vs-CPU rooms (`bot=1` query on first connect), per-room locks and CPU turn scheduling.
+- **`managers.py`** — `GameManager` / `ConnectionManager`; handles `export_replay`, vs-CPU rooms (`bot=1` query on first connect), per-room locks and CPU turn scheduling.
 - **`bot_player.py`** — Heuristic CPU actions (`choose_bot_action`): draw / tsumo / ron / skip_ron / riichi / discard by shanten.
+- **`replay_recorder.py`** — Room-scoped replay recorder service (initial/events/display names), designed so storage can migrate to Redis.
 
-- **`replay.py`** — `build_frames()` hydrates `ChinitsuGame` from recorded `initial` + `events` and returns per-step UI frames.
+- **`replay.py`** — `build_frames()` hydrates `ChinitsuGame` from recorded `initial` + `events` and returns per-step UI frames (accepts canonical v1 or `encoding: compact_v1` via `replay_codec`).
+- **`replay_codec.py`** — `compact_v1` ↔ canonical replay JSON; Redis-friendly smaller exports.
 
-- **`game.py`** — Core game engine. `ChinitsuGame` manages game state (WAITING=0, RUNNING=1, RECONNECT=2, ENDED=3), the wall (yama), turns, and action processing (draw, discard, kan, riichi, tsumo, ron). `ChinitsuPlayer` holds per-player state (hand, points, flags).
+- **`game.py`** — Core game engine. `ChinitsuGame` manages game state (WAITING=0, RUNNING=1, RECONNECT=2, ENDED=3), the wall (yama), turns, and action processing (draw, discard, kan, riichi, tsumo, ron). `ChinitsuPlayer` holds per-player state (hand, points, flags). Replay persistence is outside this file.
 
 - **`agari_judge.py`** — Wraps `python-mahjong` to evaluate winning hands, check yaku, and calculate point values.
 

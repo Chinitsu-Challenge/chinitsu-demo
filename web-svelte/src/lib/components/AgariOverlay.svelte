@@ -13,6 +13,10 @@
 	function exportReplay() {
 		sendAction('export_replay');
 	}
+
+	function exportReplayCompact() {
+		sendAction('export_replay', 'compact');
+	}
 </script>
 
 {#if result}
@@ -82,6 +86,9 @@
 			<div class="overlay-cta">
 				<button class="btn btn-primary overlay-cta-btn" type="button" onclick={startNewGame}>New Game</button>
 				<button class="btn btn-primary overlay-cta-btn" type="button" onclick={exportReplay}>Export replay</button>
+				<button class="btn btn-action overlay-cta-btn" type="button" onclick={exportReplayCompact}>
+					Export compact
+				</button>
 			</div>
 		</div>
 	</div>

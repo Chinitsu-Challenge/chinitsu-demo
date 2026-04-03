@@ -133,6 +133,7 @@ components:
           description: |
             手牌中牌的数字字符串索引，不需要指定牌时传空字符串。
             在 `start`/`start_new` 中，值大于 100 时启用调试模式（预设牌山）。
+            在 `export_replay` 中，传 `compact` 或 `c` 可得到 `encoding: compact_v1` 的精简谱面 JSON；空字符串为完整 canonical 谱面。
           example: '3'
 
     ActionType:
@@ -294,7 +295,8 @@ components:
           type: object
           description: |
             当 `action` 为 `export_replay` 且 `message` 为 `ok` 时出现。
-            序列化谱面（`version`、`initial`、`events`、`display_names`），可提交至 `POST /api/replay/build-frames`。
+            完整格式：`version`、`initial`、`events`、`display_names`。
+            精简格式（`card_idx` = `compact` / `c`）：`version`、`encoding: compact_v1`、`p`、`dn`、`i`、`e`，同样可提交至 `POST /api/replay/build-frames`。
 
     ErrorCode:
       type: string

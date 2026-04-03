@@ -437,3 +437,43 @@ class TestReplay:
         assert resp.status_code == 200, resp.text
         frames = resp.json()["frames"]
         assert "analysis" in frames[0]
+
+    def test_export_replay_compact_encoding(self, client):
+        with _room(client) as (ws1, ws2, _room_name):
+            ws_oya, ws_ko = _start(ws1, ws2, debug_code=_DEBUG_TSUMO)
+            ws_oya.send_json({"action": "tsumo", "card_idx": ""})
+            ws_oya.receive_json()
+            ws_ko.receive_json()
+            ws_oya.send_json({"action": "export_replay", "card_idx": "compact"})
+            msg = ws_oya.receive_json()
+        assert msg.get("message") == "ok"
+        rep = msg["replay"]
+        assert rep.get("encoding") == "compact_v1"
+        assert "p" in rep and "i" in rep and "e" in rep
+
+    def test_build_frames_accepts_compact_v1(self, client):
+        with _room(client) as (ws1, ws2, _room_name):
+            ws_oya, ws_ko = _start(ws1, ws2, debug_code=_DEBUG_TSUMO)
+            ws_oya.send_json({"action": "tsumo", "card_idx": ""})
+            ws_oya.receive_json()
+            ws_ko.receive_json()
+            ws_oya.send_json({"action": "export_replay", "card_idx": "c"})
+            rep = ws_oya.receive_json()["replay"]
+        resp = client.post("/api/replay/build-frames", json=rep)
+        assert resp.status_code == 200, resp.text
+        assert len(resp.json()["frames"]) >= 2
+
+    def test_compact_replay_same_length_as_full(self, client):
+        from replay import build_frames
+        from replay_codec import compactify_v1
+
+        with _room(client) as (ws1, ws2, _room_name):
+            ws_oya, ws_ko = _start(ws1, ws2, debug_code=_DEBUG_TSUMO)
+            ws_oya.send_json({"action": "tsumo", "card_idx": ""})
+            ws_oya.receive_json()
+            ws_ko.receive_json()
+            ws_oya.send_json({"action": "export_replay", "card_idx": ""})
+            full = ws_oya.receive_json()["replay"]
+        n_full = len(build_frames(full))
+        n_compact = len(build_frames(compactify_v1(full)))
+        assert n_full == n_compact

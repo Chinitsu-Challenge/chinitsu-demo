@@ -5,6 +5,7 @@ from typing import List, Dict
 from fastapi import WebSocket
 from game import ChinitsuGame
 from bot_player import choose_bot_action
+from replay_recorder import ReplayRecorder
 
 logger = logging.getLogger("uvicorn")
 
@@ -38,11 +39,17 @@ class ConnectionManager:
         self.game_manager = game_manager
         self._room_locks: Dict[str, asyncio.Lock] = {}
         self._bot_tasks: Dict[str, asyncio.Task] = {}
+        self._replay_recorders: Dict[str, ReplayRecorder] = {}
 
     def _lock_for(self, room_name: str) -> asyncio.Lock:
         if room_name not in self._room_locks:
             self._room_locks[room_name] = asyncio.Lock()
         return self._room_locks[room_name]
+
+    def _recorder_for(self, room_name: str) -> ReplayRecorder:
+        if room_name not in self._replay_recorders:
+            self._replay_recorders[room_name] = ReplayRecorder()
+        return self._replay_recorders[room_name]
 
     async def connect(
         self,
@@ -86,10 +93,10 @@ class ConnectionManager:
             self.game_manager.init_game(room_name)
             g = self.game_manager.get_game(room_name)
             g.add_player(player_id)
-            g.set_display_name(player_id, display_name)
+            self._recorder_for(room_name).set_display_name(player_id, display_name)
             if vs_bot:
                 g.add_player(BOT_CPU_PLAYER_ID)
-                g.set_display_name(BOT_CPU_PLAYER_ID, "CPU")
+                self._recorder_for(room_name).set_display_name(BOT_CPU_PLAYER_ID, "CPU")
                 g.vs_bot = True
                 g.bot_player_id = BOT_CPU_PLAYER_ID
                 g.bot_level = bot_level
@@ -106,11 +113,11 @@ class ConnectionManager:
             cur_game = self.game_manager.get_game(room_name)
             if cur_game.is_reconnecting:
                 cur_game.activate_player(player_id)
-                cur_game.set_display_name(player_id, display_name)
+                self._recorder_for(room_name).set_display_name(player_id, display_name)
                 await self.broadcast(f"{display_name} rejoins {room_name}.", room_name)
             else:
                 cur_game.add_player(player_id)
-                cur_game.set_display_name(player_id, display_name)
+                self._recorder_for(room_name).set_display_name(player_id, display_name)
                 cur_game.set_running()
                 logger.info(f"Game started in room {room_name}!")
                 host_ws = next(ws for ws in self.active_connections[room_name] if self.connection_owner[ws] != player_id)
@@ -137,6 +144,7 @@ class ConnectionManager:
                 if t is not None and not t.done():
                     t.cancel()
                 self._bot_tasks.pop(room_name, None)
+                self._replay_recorders.pop(room_name, None)
                 self.game_manager.end_game(room_name)
                 del self.active_connections[room_name]
 
@@ -216,6 +224,14 @@ class ConnectionManager:
                     if not bot_ok:
                         logger.warning("bot action rejected: %s -> %s", choice, result.get(bot_id))
                         break
+                    self._record_replay_if_success(
+                        room_name=room_name,
+                        player_id=bot_id,
+                        action=choice["action"],
+                        card_idx=choice["card_idx"],
+                        result=result,
+                        game=cur_game,
+                    )
                     for connection in self.active_connections.get(room_name, []):
                         recv_player = self.connection_owner[connection]
                         if recv_player in result:
@@ -236,9 +252,11 @@ class ConnectionManager:
             return
 
         if info.get("action") == "export_replay":
+            raw = (info.get("card_idx") or "").strip().lower()
+            want_compact = raw in ("compact", "c")
             async with self._lock_for(room_name):
-                cur_game = self.game_manager.get_game(room_name)
-                payload = cur_game.export_replay() if cur_game else None
+                rec = self._recorder_for(room_name)
+                payload = rec.export_compact() if want_compact else rec.export()
             base = {"player_id": player_id, "action": "export_replay", "broadcast": False}
             if payload:
                 base["replay"] = payload
@@ -258,6 +276,14 @@ class ConnectionManager:
             card_idx = int(info["card_idx"]) if info["card_idx"].isdigit() else None
             result = cur_game.input(info["action"], card_idx, player_id)
             if result:
+                self._record_replay_if_success(
+                    room_name=room_name,
+                    player_id=player_id,
+                    action=info["action"],
+                    card_idx=card_idx,
+                    result=result,
+                    game=cur_game,
+                )
                 for connection in self.active_connections[room_name]:
                     recv_player = self.connection_owner[connection]
                     if recv_player in result:
@@ -268,3 +294,24 @@ class ConnectionManager:
         post = self.game_manager.get_game(room_name)
         if schedule_bot and post and getattr(post, "vs_bot", False):
             self._schedule_bot(room_name)
+
+    def _record_replay_if_success(
+        self,
+        room_name: str,
+        player_id: str,
+        action: str,
+        card_idx: int | None,
+        result: dict,
+        game: ChinitsuGame,
+    ) -> None:
+        recorder = self._recorder_for(room_name)
+        if action in ("start", "start_new"):
+            me = result.get(player_id, {})
+            if me.get("message") == "ok":
+                recorder.start_round(game)
+            return
+        me = result.get(player_id, {})
+        msg = me.get("message")
+        success = (msg == "ok") or (msg is None and action in ("draw",))
+        if success and recorder.initial is not None:
+            recorder.record_action(player_id, action, card_idx)

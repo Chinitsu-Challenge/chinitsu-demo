@@ -51,12 +51,12 @@ function logMsg(text: string, type = '') {
 }
 
 // --- Actions ---
-export function sendAction(action: string, cardIdx?: number | null) {
+export function sendAction(action: string, cardIdx?: number | null | string) {
 	if (!ws || ws.readyState !== WebSocket.OPEN) return;
 	ws.send(
 		JSON.stringify({
 			action,
-			card_idx: cardIdx != null ? String(cardIdx) : ''
+			card_idx: cardIdx != null && cardIdx !== '' ? String(cardIdx) : ''
 		})
 	);
 }
@@ -162,7 +162,11 @@ function handleMessage(data: Record<string, unknown>) {
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
-			a.download = `chinitsu-replay-${Date.now()}.json`;
+			const enc = (data.replay as { encoding?: string }).encoding;
+			a.download =
+				enc === 'compact_v1'
+					? `chinitsu-replay-compact-${Date.now()}.json`
+					: `chinitsu-replay-${Date.now()}.json`;
 			a.click();
 			URL.revokeObjectURL(url);
 			logMsg('Replay file downloaded.', 'broadcast');

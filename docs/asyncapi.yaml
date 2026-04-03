@@ -138,6 +138,8 @@ components:
             Numeric string index into the player's hand, or empty string when
             no card is needed. For `start`/`start_new`, a value > 100 activates
             debug mode with a preset wall.
+            For `export_replay`, use `compact` or `c` to receive `encoding: compact_v1`
+            (smaller JSON); empty string returns the full canonical replay.
           example: '3'
 
     ActionType:
@@ -299,7 +301,8 @@ components:
           type: object
           description: |
             Present when `action` is `export_replay` and `message` is `ok`.
-            Serialized replay (`version`, `initial`, `events`, `display_names`) for the replay viewer or `POST /api/replay/build-frames`.
+            Canonical: `version`, `initial`, `events`, `display_names`.
+            Compact (`card_idx` = `compact` / `c`): `version`, `encoding: compact_v1`, `p`, `dn`, `i`, `e` — same `POST /api/replay/build-frames` input.
 
     ErrorCode:
       type: string

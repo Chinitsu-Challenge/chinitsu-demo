@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from game import ChinitsuGame, TurnState, RUNNING
 from bot_player import shanten_closed
 from agari_judge import get_tenpai_tiles
+from replay_codec import normalize_replay_for_build
 
 
 def _stage_to_str(stage: int) -> str:
@@ -147,6 +148,7 @@ def build_frames(replay: Dict[str, Any]) -> List[Dict[str, Any]]:
     Re-simulate a replay dict and return one frame per step (initial + after each event).
     Raises ValueError on invalid payload or simulation error.
     """
+    replay = normalize_replay_for_build(replay)
     if int(replay.get("version", 0)) != 1:
         raise ValueError("unsupported replay version")
     initial = replay["initial"]

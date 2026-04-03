@@ -101,9 +101,11 @@ After any frontend change, run `npm run build` from `web-svelte/` before testing
 ### Replay (谱面)
 
 - **`server/replay.py`** — `build_frames(replay_json)` re-simulates a saved round from `initial` + `events` for the scrub UI.
-- **`server/game.py`** — Records `initial` snapshot after deal and appends each successful action to `events`; `export_replay()` returns the JSON payload.
+- **`server/replay_recorder.py`** — Room-scoped replay recorder service (initial snapshot/events/display_names), currently in-memory and easy to swap for Redis-backed storage.
+- **`server/replay_codec.py`** — Optional `compact_v1` encoding for smaller replay JSON (`export_replay` with `card_idx: compact`).
+- **`server/game.py`** — Core deterministic state machine; provides `snapshot_for_replay()` but does not own replay persistence/export.
 - **HTTP:** `POST /api/replay/build-frames` — body = full replay JSON → `{ "frames": [...] }`.
-- **WebSocket:** `export_replay` (empty `card_idx`) — response includes `replay` when a round has been recorded; client downloads JSON.
+- **WebSocket:** `export_replay` — empty `card_idx` returns full replay; `card_idx: compact` (or `c`) returns `encoding: compact_v1`. Client downloads JSON; `/replay` accepts either shape via `POST /api/replay/build-frames`.
 - **Frontend:** `routes/replay/+page.svelte`, `lib/components/ReplayViewer.svelte`, `lib/replayView.ts`; lobby links to `/replay`. Round-end controls (**New Game**, **Export replay**) live in `AgariOverlay`; the action bar stays hidden while `$agariResult` is set.
 
 ### WebSocket Protocol

@@ -20,7 +20,7 @@ alwaysApply: true
 
 ## 约定
 
-- 后端：`server/`（`game.py` 引擎与谱面录制，`managers.py` 房间/WS，`replay.py` 重放帧，`agari_judge.py` 和牌）。
+- 后端：`server/`（`game.py` 引擎；`replay_recorder.py` 谱面录制、`replay_codec.py` 可选精简格式；`managers.py` 房间/WS；`replay.py` 重放帧；`agari_judge.py` 和牌）。
 - 前端：`web-svelte/`（`ws.ts`、`types.ts`；复盘 `routes/replay/`、`ReplayViewer.svelte`、`replayView.ts`）。
 - 用 **8000 静态页** 测 UI 时：改前端后必须 **`npm run build`**（输出到 `web-svelte/build/`）。
 - 依赖：`uv sync`；测试：根目录 `uv run pytest -v`。
