@@ -126,6 +126,7 @@ class SnapshotManager:
             "game_status": snapshot.get("game_status", ""),
             "turn_stage": snapshot.get("turn_stage", ""),
             "current_player": snapshot.get("current_player_id", ""),
+            "opponent_id": opponent_id or "",
             "turn_number": snapshot.get("turn_number", 0),
             "round_no": snapshot.get("round_no", 0),
             "round_limit": snapshot.get("round_limit", 8),

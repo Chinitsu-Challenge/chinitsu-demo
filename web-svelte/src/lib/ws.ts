@@ -130,6 +130,38 @@ export function connect(
 
 // --- Message handling ---
 function handleMessage(data: Record<string, unknown>) {
+	if (data.event === 'game_snapshot') {
+		const me = data.me as Record<string, unknown>;
+		const opp = data.opponent as Record<string, unknown>;
+		if (data.opponent_id) oppId = data.opponent_id as string;
+		const newOppDisplayName = (opp.display_name as string) || '';
+		if (newOppDisplayName) oppDisplayName = newOppDisplayName;
+		gameState.update((s) => {
+			const stage = data.turn_stage as string;
+			const validStages = ['before_draw', 'after_draw', 'after_discard'];
+			return {
+				...s,
+				phase: 'playing' as const,
+				myHand: me.hand as string[],
+				myFuuro: me.fuuro as string[][],
+				myKawa: (me.kawa as [string, boolean][]).map(([card, isRiichi]) => ({ card, isRiichi })),
+				myPoints: me.point as number,
+				myIsOya: me.is_oya as boolean,
+				myRiichi: me.is_riichi as boolean,
+				oppFuuro: opp.fuuro as string[][],
+				oppKawa: (opp.kawa as [string, boolean][]).map(([card, isRiichi]) => ({ card, isRiichi })),
+				oppPoints: opp.point as number,
+				oppRiichi: opp.is_riichi as boolean,
+				oppDisplayName: newOppDisplayName || s.oppDisplayName,
+				turnStage: (validStages.includes(stage) ? stage : s.turnStage) as typeof s.turnStage,
+				currentPlayer: data.current_player as string,
+				wallCount: data.wall_count as number,
+				kyoutaku: data.kyoutaku_number as number,
+			};
+		});
+		return;
+	}
+
 	if (data.broadcast) {
 		logMsg(data.message as string, 'broadcast');
 		const msg = data.message as string;
