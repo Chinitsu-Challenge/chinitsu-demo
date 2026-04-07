@@ -20,7 +20,7 @@ def evaluate(snapshot: dict) -> MatchEndDecision:
 
     结束条件（满足任一即结束）：
     1. round_no >= round_limit（已打完所有轮次）
-    2. 任一方 point <= 0（点数归零）
+    2. 任一方 point < 0（点数归零）
 
     若快照缺少关键字段，返回 should_end=False（不能在信息不全时做决策）。
     """
@@ -37,7 +37,7 @@ def evaluate(snapshot: dict) -> MatchEndDecision:
     # 检查点数归零
     for pid, pdata in players.items():
         point = pdata.get("point")
-        if point is not None and point <= 0:
+        if point is not None and point < 0:
             logger.info("比赛结束：玩家 %s 点数归零 (%d)", pid, point)
             return MatchEndDecision(should_end=True, reason="point_zero")
 
