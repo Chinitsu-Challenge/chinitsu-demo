@@ -17,7 +17,7 @@ class RoomStatus(str, Enum):
     WAITING   = "waiting"      # 等待玩家加入 / 等待双方确认开始
     RUNNING   = "running"      # 对局进行中（包含多轮，单轮结束后仍为 RUNNING）
     RECONNECT = "reconnect"    # 一方断线，等待重连
-    ENDED     = "ended"        # 整个比赛结束（轮数到上限 / 有人 point<=0）
+    ENDED     = "ended"        # 整个比赛结束（轮数到上限 / 有人 point<0）
     DESTROYED = "destroyed"    # 终态标记，仅逻辑使用
 
 
