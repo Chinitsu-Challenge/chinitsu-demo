@@ -3,7 +3,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -12,6 +12,7 @@ from redis_client import init_redis, close_redis
 from auth import verify_token, register_user, authenticate_user
 from models import RegisterRequest, LoginRequest, TokenResponse
 from room.room_manager import RoomManager
+from room.errors import WS_CLOSE_INVALID_TOKEN
 from managers import ConnectionManager
 
 
@@ -75,13 +76,31 @@ manager = ConnectionManager(room_manager)
 app.mount("/assets", StaticFiles(directory=_SERVER_DIR / "assets"), name="assets")
 
 
+@app.get("/api/active_room")
+async def api_active_room(authorization: str = Header(default="")):
+    """返回玩家当前所在的活跃房间（用于前端页面加载时自动重连）"""
+    token = authorization[7:] if authorization.startswith("Bearer ") else ""
+    payload = verify_token(token) if token else None
+    if payload is None:
+        return JSONResponse(status_code=401, content={"detail": "invalid_token"})
+    user_id = payload["uuid"]
+    room_name = room_manager.get_user_active_room(user_id)
+    if room_name is None:
+        return JSONResponse(content={"room_name": None})
+    room = room_manager.rooms.get(room_name)
+    return JSONResponse(content={
+        "room_name": room_name,
+        "room_status": room.status.value if room else None,
+    })
+
+
 @app.websocket("/ws/{room_name}")
 async def websocket_endpoint(websocket: WebSocket, room_name: str, token: str = Query("")):
     # 验证 JWT token
     payload = verify_token(token)
     if payload is None:
         await websocket.accept()
-        await websocket.close(code=1008, reason="invalid_token")
+        await websocket.close(code=WS_CLOSE_INVALID_TOKEN[0], reason=WS_CLOSE_INVALID_TOKEN[1])
         return
 
     player_id = payload["uuid"]

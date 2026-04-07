@@ -22,7 +22,7 @@ from room import state_machine
 from room import protocol
 from room.errors import (
     WS_CLOSE_ROOM_FULL, WS_CLOSE_DUPLICATE_ID, WS_CLOSE_INVALID_ROOM,
-    WS_CLOSE_ROOM_EXPIRED, WS_CLOSE_ROOM_CLOSED,
+    WS_CLOSE_ROOM_EXPIRED, WS_CLOSE_ROOM_CLOSED, WS_CLOSE_ALREADY_IN_ROOM,
     ERR_GAME_NOT_STARTED, ERR_GAME_PAUSED, ERR_GAME_ENDED,
     ERR_NOT_ENOUGH_PLAYERS, ERR_UNKNOWN_ACTION, ERR_ROUND_NOT_ENDED,
     InvalidTransitionError,
@@ -122,6 +122,37 @@ class RoomManager:
                     await self.push.unicast(room_name, user_id, player_view)
                 logger.info("ENDED 中玩家重连 [%s] %s(%s)", room_name, display_name, user_id[:8])
                 return True
+
+        # ── 场景 1c：WAITING 中离线玩家重连 ──────────────
+        # 必须在满员检查之前：双人 WAITING 满员但该玩家是其中一个离线成员
+        if room is not None and room.status == RoomStatus.WAITING:
+            session = self.get_session(room_name, user_id)
+            if session is not None and not session.online and user_id in room.player_ids:
+                if not ws_accepted:
+                    await ws.accept()
+                    ws_accepted = True
+                session.mark_online(ws)
+                await self._sync_session_to_redis(session)
+                # 广播让在线方的前端更新对手状态
+                await self.push.broadcast(
+                    room_name,
+                    protocol.make_player_joined(display_name, room_name, len(room.player_ids)),
+                )
+                logger.info("WAITING 中玩家重连 [%s] %s(%s)", room_name, display_name, user_id[:8])
+                return True
+
+        # ── 一人一房间限制 ─────────────────────────────────────────
+        # 必须在满员检查之前：先确认玩家没有在其他房间中
+        # （处于 RECONNECT/ENDED 中的离线玩家仍算"在房间中"）
+        active_room = self.get_user_active_room(user_id)
+        if active_room is not None and active_room != room_name:
+            if not ws_accepted:
+                await ws.accept()
+            code, reason = WS_CLOSE_ALREADY_IN_ROOM
+            await ws.close(code=code, reason=reason)
+            logger.info("拒绝连接：玩家 %s 已在房间 [%s]，不能加入 [%s]",
+                        user_id[:8], active_room, room_name)
+            return False
 
         # ── 场景 2：房间已存在，检查能否加入 ──────────
         if room is not None:
@@ -734,6 +765,16 @@ class RoomManager:
     def get_session(self, room_name: str, user_id: str) -> PlayerSession | None:
         """获取指定玩家的会话"""
         return self.sessions.get(room_name, {}).get(user_id)
+
+    def get_user_active_room(self, user_id: str) -> str | None:
+        """
+        返回玩家当前所在的房间名（在线或离线均算）。
+        若不在任何房间则返回 None。
+        """
+        for room_name, room_sessions in self.sessions.items():
+            if user_id in room_sessions:
+                return room_name
+        return None
 
     def get_display_names(self, room_name: str) -> dict[str, str]:
         """从 session 中获取房间内所有玩家的昵称映射 {user_id: display_name}"""
