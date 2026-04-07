@@ -6,3 +6,6 @@ web-svelte/.svelte-kit/
 .venv/
 *.lock
 *.db
+.vscode/
+server/room/tests/test_run.log
+server/room/development_docs/
