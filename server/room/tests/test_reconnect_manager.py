@@ -119,20 +119,24 @@ class TestOnDisconnectRunning:
 # ══════════════════════════════════════════════════════════════
 
 class TestOnDisconnectLobby:
-    def test_disconnect_in_waiting_removes_player(self):
-        """WAITING 中断线 → 玩家从房间移除"""
+    def test_disconnect_in_waiting_marks_offline(self):
+        """WAITING 满员中断线 → 玩家保留在房间中但标记为离线（可重连）"""
         async def inner():
             rm, ws_alice, ws_bob = await setup_two_player_room()
             room = rm.rooms["testroom"]
 
             await rm.disconnect(ws_alice, "testroom", "uid-alice")
 
-            assert "uid-alice" not in room.player_ids
+            # 仍在 player_ids，但会话标记为离线
+            assert "uid-alice" in room.player_ids
+            session = rm.get_session("testroom", "uid-alice")
+            assert session is not None
+            assert session.online is False
 
         run_async(inner())
 
-    def test_disconnect_last_player_destroys_room(self):
-        """WAITING 中最后一名玩家断线 → 房间销毁"""
+    def test_disconnect_both_players_destroys_room(self):
+        """WAITING 中双方均断线 → 房间销毁"""
         async def inner():
             rm, ws_alice, ws_bob = await setup_two_player_room()
 

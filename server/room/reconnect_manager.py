@@ -123,30 +123,39 @@ class ReconnectManager:
 
     async def _handle_lobby_disconnect(self, room, session) -> None:
         """
-        WAITING / ENDED 状态下断线：直接移除玩家，不进重连。
+        WAITING 状态下断线。
+        - 房间已满（2 人）：仅标记离线，保留会话，等待重连；清空开始投票。
+        - 房间未满（1 人）：移除玩家；若房间为空则销毁。
         """
         room_name = room.room_name
         user_id = session.user_id
         display_name = session.display_name
 
-        # 从房间中移除玩家
-        self._rm._remove_player_from_room(room_name, user_id)
+        if len(room.player_ids) == 2:
+            # 双方已就位：保留会话，仅标记离线（等待重连）
+            session.mark_offline()
+            await self._rm._sync_session_to_redis(session)
+            # 开始投票需清空（断线方无法保持 ready 状态）
+            self._rm.ready_svc.clear(room_name)
 
-        # 清空投票状态（人员变动后投票无效）
-        self._rm.ready_svc.clear(room_name)
-        self._rm.end_svc.clear(room_name)
-
-        # 检查房间是否为空
-        if len(room.player_ids) == 0:
-            await self._rm._do_transition(room, RoomEvent.ALL_LEFT)
-            await self._rm.cleanup_room(room_name, room.room_id, "all_left")
+            # 若双方均已断线 → 销毁房间（无意义继续保留）
+            online_ids = self._rm.push.get_online_user_ids(room_name)
+            if len(online_ids) == 0:
+                await self._rm._do_transition(room, RoomEvent.ALL_LEFT)
+                await self._rm.cleanup_room(room_name, room.room_id, "all_left")
+            else:
+                # 通知在线方
+                await self._rm.push.broadcast(
+                    room_name,
+                    protocol.make_player_left(display_name, room_name, len(room.player_ids)),
+                )
         else:
-            # 通知剩余玩家
-            remaining_count = len(room.player_ids)
-            await self._rm.push.broadcast(
-                room_name,
-                protocol.make_player_left(display_name, room_name, remaining_count),
-            )
+            # 房间只有 1 人：直接移除
+            self._rm._remove_player_from_room(room_name, user_id)
+            self._rm.ready_svc.clear(room_name)
+            if len(room.player_ids) == 0:
+                await self._rm._do_transition(room, RoomEvent.ALL_LEFT)
+                await self._rm.cleanup_room(room_name, room.room_id, "all_left")
 
     async def _handle_ended_disconnect(self, room, session) -> None:
         """

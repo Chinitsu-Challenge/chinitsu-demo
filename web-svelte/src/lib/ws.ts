@@ -114,7 +114,9 @@ export function connect(
 						? 'Room is full!'
 						: event.reason === 'duplicate_id'
 							? 'Name already taken in this room.'
-							: 'Connection refused.';
+							: event.reason === 'already_in_room'
+								? 'You are already in another room.'
+								: 'Connection refused.';
 				done({ ok: false, reason });
 			} else {
 				done({ ok: false, reason: 'Disconnected from server.' });
