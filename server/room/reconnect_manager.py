@@ -48,16 +48,19 @@ class ReconnectManager:
             await self._handle_running_disconnect(room, session)
         elif room.status == RoomStatus.RECONNECT:
             await self._handle_reconnect_disconnect(room, session)
-        elif room.status in (RoomStatus.WAITING, RoomStatus.ENDED):
+        elif room.status == RoomStatus.WAITING:
             await self._handle_lobby_disconnect(room, session)
+        elif room.status == RoomStatus.ENDED:
+            await self._handle_ended_disconnect(room, session)
 
     async def _handle_running_disconnect(self, room, session) -> None:
         """RUNNING 中一方断线"""
         room_name = room.room_name
         user_id = session.user_id
 
-        # 标记离线
+        # 标记离线，同步到 Redis
         session.mark_offline()
+        await self._rm._sync_session_to_redis(session)
 
         # 检查在线人数
         online_ids = self._rm.push.get_online_user_ids(room_name)
@@ -108,6 +111,7 @@ class ReconnectManager:
         """
         room_name = room.room_name
         session.mark_offline()
+        await self._rm._sync_session_to_redis(session)
 
         online_ids = self._rm.push.get_online_user_ids(room_name)
         if len(online_ids) == 0:
@@ -144,6 +148,16 @@ class ReconnectManager:
                 protocol.make_player_left(display_name, room_name, remaining_count),
             )
 
+    async def _handle_ended_disconnect(self, room, session) -> None:
+        """
+        ENDED 状态下断线：保留会话，仅标记离线。
+        玩家仍留在房间中，重连后可继续对 continue/end 投票。
+        不清空已有投票记录。
+        """
+        session.mark_offline()
+        await self._rm._sync_session_to_redis(session)
+        logger.info("ENDED 中玩家断线，保留会话 [%s/%s]", room.room_name, session.user_id)
+
     async def on_reconnect(self, ws, room_name: str, user_id: str, display_name: str) -> bool:
         """
         玩家重连处理。
@@ -164,10 +178,11 @@ class ReconnectManager:
         if session.online:
             return False  # 已在线，不是重连
 
-        # 恢复在线状态
+        # 恢复在线状态，同步到 Redis
         import uuid
         new_conn_id = str(uuid.uuid4())
         session.mark_online(ws, new_conn_id)
+        await self._rm._sync_session_to_redis(session)
 
         # 取消重连计时器
         timer_key = f"reconnect:{room_name}:{user_id}"
