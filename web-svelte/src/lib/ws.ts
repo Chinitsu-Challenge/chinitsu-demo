@@ -129,7 +129,95 @@ export function connect(
 }
 
 // --- Message handling ---
+function handleBroadcastEvent(data: Record<string, unknown>) {
+	const event = data.event as string;
+
+	if (event === 'player_joined') {
+		const dn = data.display_name as string;
+		logMsg(`${dn} joined the room`, 'broadcast');
+		if (dn && dn !== myDisplayName) {
+			oppDisplayName = dn;
+			gameState.update((s) => ({ ...s, oppDisplayName: dn }));
+		}
+		return;
+	}
+
+	if (event === 'player_left') {
+		logMsg(`${data.display_name as string} left the room`, 'broadcast');
+		return;
+	}
+
+	if (event === 'start_ready_changed') {
+		const readyIds = data.ready_user_ids as string[];
+		if (readyIds.includes(myId)) {
+			gameState.update((s) => ({ ...s, phase: 'waiting_new_game' }));
+		}
+		return;
+	}
+
+	if (event === 'continue_vote_changed') {
+		const continueIds = data.continue_user_ids as string[];
+		if (continueIds.includes(myId)) {
+			gameState.update((s) => ({ ...s, phase: 'waiting_new_game' }));
+		}
+		return;
+	}
+
+	if (event === 'match_restarted') {
+		gameState.update((s) => ({ ...s, phase: 'waiting' }));
+		logMsg('Match restarted. Click Start to begin!', 'broadcast');
+		return;
+	}
+
+	if (event === 'match_ended') {
+		const reason = data.reason as string;
+		const scores = data.final_scores as Record<string, number>;
+		const myScore = scores[myId] ?? 0;
+		const oppScore = scores[oppId] ?? 0;
+		logMsg(
+			`Match over (${reason}). Final — You: ${myScore.toLocaleString()}, Opp: ${oppScore.toLocaleString()}`,
+			'broadcast'
+		);
+		gameState.update((s) => ({ ...s, phase: 'ended' }));
+		return;
+	}
+
+	if (event === 'reconnect_timeout') {
+		const winnerId = data.winner_id as string;
+		const isWinner = winnerId === myId;
+		logMsg(
+			isWinner ? 'Opponent timed out. You win!' : 'Reconnect timed out. You lose.',
+			'broadcast'
+		);
+		gameState.update((s) => ({ ...s, phase: 'ended' }));
+		return;
+	}
+
+	if (event === 'room_expired' || event === 'room_closed') {
+		logMsg('Room closed.', 'broadcast');
+		gameState.update((s) => ({ ...s, phase: 'lobby' }));
+		return;
+	}
+
+	// Legacy: old-format broadcast with a plain message string
+	const msg = data.message as string | undefined;
+	if (msg) {
+		logMsg(msg, 'broadcast');
+		const joinMatch = msg.match(/^(.+) joins/);
+		const hostMatch = msg.match(/Host is ([^.]+)/);
+		if (joinMatch && joinMatch[1] !== myDisplayName) {
+			oppDisplayName = joinMatch[1];
+			gameState.update((s) => ({ ...s, oppDisplayName: joinMatch[1] }));
+		}
+		if (hostMatch && hostMatch[1] !== myDisplayName) {
+			oppDisplayName = hostMatch[1];
+			gameState.update((s) => ({ ...s, oppDisplayName: hostMatch[1] }));
+		}
+	}
+}
+
 function handleMessage(data: Record<string, unknown>) {
+	// 1. Reconnect snapshot — restore full game state
 	if (data.event === 'game_snapshot') {
 		const me = data.me as Record<string, unknown>;
 		const opp = data.opponent as Record<string, unknown>;
@@ -139,9 +227,15 @@ function handleMessage(data: Record<string, unknown>) {
 		gameState.update((s) => {
 			const stage = data.turn_stage as string;
 			const validStages = ['before_draw', 'after_draw', 'after_discard'];
+			// Use game_status to restore the correct phase:
+			//   "ended"   → phase 'ended'   (round over, show New Game button)
+			//   otherwise → phase 'playing'
+			const gameStatus = data.game_status as string;
+			const restoredPhase: GameState['phase'] =
+				gameStatus === 'ended' ? 'ended' : 'playing';
 			return {
 				...s,
-				phase: 'playing' as const,
+				phase: restoredPhase,
 				myHand: me.hand as string[],
 				myFuuro: me.fuuro as string[][],
 				myKawa: (me.kawa as [string, boolean][]).map(([card, isRiichi]) => ({ card, isRiichi })),
@@ -157,28 +251,30 @@ function handleMessage(data: Record<string, unknown>) {
 				currentPlayer: data.current_player as string,
 				wallCount: data.wall_count as number,
 				kyoutaku: data.kyoutaku_number as number,
+				selectedIdx: null,
 			};
 		});
 		return;
 	}
 
+	// 2. Broadcast events (room/match lifecycle)
 	if (data.broadcast) {
-		logMsg(data.message as string, 'broadcast');
-		const msg = data.message as string;
-		const joinMatch = msg.match(/^(.+) joins/);
-		const hostMatch = msg.match(/Host is ([^.]+)/);
-		if (joinMatch && joinMatch[1] !== myDisplayName) {
-			oppDisplayName = joinMatch[1];
-			gameState.update((s) => ({ ...s, oppDisplayName: joinMatch[1] }));
-		}
-		if (hostMatch && hostMatch[1] !== myDisplayName) {
-			oppDisplayName = hostMatch[1];
-			gameState.update((s) => ({ ...s, oppDisplayName: hostMatch[1] }));
-		}
+		handleBroadcastEvent(data);
 		return;
 	}
 
-	// Waiting for the other player to also click start
+	// 3. Non-broadcast protocol events (unicast, no action field)
+	if (data.event === 'opponent_disconnected') {
+		logMsg('Opponent disconnected. Waiting for reconnect...', 'broadcast');
+		return;
+	}
+
+	if (data.event === 'opponent_reconnected') {
+		logMsg('Opponent reconnected!', 'broadcast');
+		return;
+	}
+
+	// 4. Legacy: waiting_for_opponent message (old protocol compatibility)
 	if (data.message === 'waiting_for_opponent') {
 		gameState.update((s) => ({ ...s, phase: 'waiting_new_game' }));
 		return;

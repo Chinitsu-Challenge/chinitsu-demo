@@ -66,11 +66,7 @@ class MockWebSocket:
 
 def run_async(coro):
     """在同步测试中运行协程（避免依赖 pytest-asyncio 版本问题）"""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
+    return asyncio.run(coro)
 
 
 # ══════════════════════════════════════════════════════════════

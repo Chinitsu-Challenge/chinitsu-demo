@@ -105,6 +105,24 @@ class RoomManager:
                     return True
                 # 重连失败，继续走常规加入流程（ws 已 accept，后续跳过重复 accept）
 
+        # ── 场景 1b：ENDED 中离线玩家重连 ─────────────
+        # 必须在满员检查之前：房间满员但该玩家是其中一个离线成员
+        if room is not None and room.status == RoomStatus.ENDED:
+            session = self.get_session(room_name, user_id)
+            if session is not None and not session.online and user_id in room.player_ids:
+                if not ws_accepted:
+                    await ws.accept()
+                    ws_accepted = True
+                session.mark_online(ws)
+                await self._sync_session_to_redis(session)
+                # 发送末局快照，让前端恢复到正确的 ended 状态
+                snapshot = await self.snapshot_mgr.load_snapshot(room_name)
+                if snapshot:
+                    player_view = self.snapshot_mgr.build_player_view(snapshot, user_id)
+                    await self.push.unicast(room_name, user_id, player_view)
+                logger.info("ENDED 中玩家重连 [%s] %s(%s)", room_name, display_name, user_id[:8])
+                return True
+
         # ── 场景 2：房间已存在，检查能否加入 ──────────
         if room is not None:
             # 满员检查

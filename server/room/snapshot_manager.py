@@ -120,12 +120,31 @@ class SnapshotManager:
             "is_riichi": opponent_data.get("is_riichi", False),
         }
 
+        # ── Frontend currentPlayer convention ────────────────────────
+        # Backend:  current_player_id = the active actor
+        #           (in AFTER_DISCARD this is the DISCARDER)
+        # Frontend: currentPlayer = who CAN ACT next
+        #           (in AFTER_DISCARD this is the one who can ron/skip,
+        #            i.e. the OPPONENT of the discarder)
+        all_pids = list(players.keys())
+        raw_current = snapshot.get("current_player_id", "")
+        turn_stage = snapshot.get("turn_stage", "")
+
+        if turn_stage == "after_discard" and raw_current and len(all_pids) == 2:
+            # Flip: the one who can ron/skip is the opponent of the discarder
+            frontend_current_player = next(
+                (pid for pid in all_pids if pid != raw_current),
+                raw_current,
+            )
+        else:
+            frontend_current_player = raw_current
+
         return {
             "event": "game_snapshot",
             "broadcast": False,
             "game_status": snapshot.get("game_status", ""),
-            "turn_stage": snapshot.get("turn_stage", ""),
-            "current_player": snapshot.get("current_player_id", ""),
+            "turn_stage": turn_stage,
+            "current_player": frontend_current_player,
             "opponent_id": opponent_id or "",
             "turn_number": snapshot.get("turn_number", 0),
             "round_no": snapshot.get("round_no", 0),
