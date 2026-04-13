@@ -28,6 +28,7 @@ export const agariResult = writable<(AgariData & { isMe: boolean }) | null>(null
 
 // --- Spectator state ---
 export const isSpectator = writable(false);
+export const duplicateTab = writable(false); // true = 另一标签页已占用连接，当前 Tab 正在等待
 export const spectatorState = writable<SpectatorState>({
 	phase: 'lobby',
 	gameStatus: '',
@@ -45,31 +46,73 @@ export const spectatorState = writable<SpectatorState>({
 let ws: WebSocket | null = null;
 export let myId = '';
 
-// --- Duplicate-tab retry state ---
-let lastRoomName: string | null = null;
-let retryTimer: ReturnType<typeof setTimeout> | null = null;
-let isRetrying = false;
-const RETRY_INTERVAL_MS = 5000;
+// --- Duplicate-tab detection via BroadcastChannel ---
+// Active tab (Tab 1): broadcasts a heartbeat every 800 ms while the WS is open.
+// Waiting tab (Tab 2): watches for those heartbeats; when they stop for 2 s it
+//   knows Tab 1 closed and immediately calls connect() again.
+const BC_CHANNEL = 'chinitsu_active_tab';
+const HEARTBEAT_INTERVAL_MS = 800;
+const HEARTBEAT_TIMEOUT_MS = 2000;
 
-function scheduleRetry() {
-	if (retryTimer !== null) clearTimeout(retryTimer);
-	if (!lastRoomName) return;
-	if (!isRetrying) {
-		isRetrying = true;
-		logMsg('You are already connected in another tab. Will retry automatically when that tab closes…', 'warn');
-	}
-	retryTimer = setTimeout(() => {
-		retryTimer = null;
-		if (lastRoomName) connect(lastRoomName);
-	}, RETRY_INTERVAL_MS);
+let lastRoomName: string | null = null;
+let _txChannel: BroadcastChannel | null = null;
+let _txTimer: ReturnType<typeof setInterval> | null = null;
+let _rxChannel: BroadcastChannel | null = null;
+let _rxTimer: ReturnType<typeof setTimeout> | null = null;
+
+function startSendingHeartbeat(roomName: string) {
+	stopSendingHeartbeat();
+	if (typeof BroadcastChannel === 'undefined') return;
+	_txChannel = new BroadcastChannel(BC_CHANNEL);
+	_txTimer = setInterval(() => {
+		_txChannel?.postMessage({ type: 'heartbeat', room: roomName });
+	}, HEARTBEAT_INTERVAL_MS);
+	// Tell waiting tabs immediately when this tab is about to close so they can
+	// reconnect before the TCP connection fully drops on the server side.
+	window.addEventListener('pagehide', () => {
+		_txChannel?.postMessage({ type: 'closing', room: roomName });
+	}, { once: true });
 }
 
-function clearRetry() {
-	if (retryTimer !== null) {
-		clearTimeout(retryTimer);
-		retryTimer = null;
+function stopSendingHeartbeat() {
+	if (_txTimer !== null) { clearInterval(_txTimer); _txTimer = null; }
+	_txChannel?.close();
+	_txChannel = null;
+}
+
+function startWatchingHeartbeat() {
+	stopWatchingHeartbeat();
+	if (typeof BroadcastChannel === 'undefined') {
+		// Fallback for browsers without BroadcastChannel (very rare)
+		_rxTimer = setTimeout(() => { if (lastRoomName) connect(lastRoomName); }, 5000);
+		return;
 	}
-	isRetrying = false;
+	_rxChannel = new BroadcastChannel(BC_CHANNEL);
+	const arm = () => {
+		if (_rxTimer !== null) clearTimeout(_rxTimer);
+		_rxTimer = setTimeout(() => {
+			// No heartbeat for HEARTBEAT_TIMEOUT_MS → active tab is gone
+			stopWatchingHeartbeat();
+			if (lastRoomName) connect(lastRoomName);
+		}, HEARTBEAT_TIMEOUT_MS);
+	};
+	_rxChannel.onmessage = (e) => {
+		if (e.data?.type === 'heartbeat') {
+			arm();
+		} else if (e.data?.type === 'closing') {
+			// Active tab is explicitly closing — reconnect after a short delay to
+			// let the server finish processing its WebSocket disconnect.
+			stopWatchingHeartbeat();
+			setTimeout(() => { if (lastRoomName) connect(lastRoomName); }, 500);
+		}
+	};
+	arm(); // start the countdown immediately in case heartbeats never arrive
+}
+
+function stopWatchingHeartbeat() {
+	if (_rxTimer !== null) { clearTimeout(_rxTimer); _rxTimer = null; }
+	_rxChannel?.close();
+	_rxChannel = null;
 }
 export let oppId = '';
 export let myDisplayName = '';
@@ -107,7 +150,8 @@ export function sendAction(action: string, cardIdx?: number | null) {
 export function connect(
 	roomName: string
 ): Promise<{ ok: boolean; reason?: string }> {
-	clearRetry();
+	stopWatchingHeartbeat();
+	stopSendingHeartbeat();
 	lastRoomName = roomName;
 	myId = getUuid();
 	myDisplayName = getUsername();
@@ -139,7 +183,9 @@ export function connect(
 		ws.onopen = () => {
 			clearTimeout(timeout);
 			console.log('[ws] connected');
-			isRetrying = false;
+			stopWatchingHeartbeat();
+			startSendingHeartbeat(roomName);
+			duplicateTab.set(false);
 			// Reset spectator state on every new connection
 			isSpectator.set(false);
 			spectatorState.update((s) => ({ ...s, phase: 'lobby', players: {} }));
@@ -158,8 +204,9 @@ export function connect(
 				done({ ok: false, reason: 'Authentication failed. Please login again.' });
 			} else if (event.code === 1003) {
 				if (event.reason === 'duplicate_id') {
-					done({ ok: false, reason: 'Already connected in another tab.' });
-					scheduleRetry();
+					duplicateTab.set(true);
+					startWatchingHeartbeat();
+					done({ ok: false, reason: 'duplicate_id' });
 					return;
 				}
 				const reason =
@@ -172,12 +219,14 @@ export function connect(
 								: 'Connection refused.';
 				done({ ok: false, reason });
 			} else {
+				stopSendingHeartbeat();
 				done({ ok: false, reason: 'Disconnected from server.' });
 			}
 		};
 
 		ws.onerror = () => {
 			clearTimeout(timeout);
+			stopSendingHeartbeat();
 			done({ ok: false, reason: 'Connection failed.' });
 		};
 	});

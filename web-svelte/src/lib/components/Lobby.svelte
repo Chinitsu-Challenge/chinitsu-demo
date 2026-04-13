@@ -22,7 +22,11 @@
 		connecting = true;
 		const result = await connect(roomName.trim());
 		if (!result.ok) {
-			status = result.reason ?? 'Connection failed.';
+			// duplicate_id: +page.svelte switches to the dedicated waiting screen,
+			// so we just clear the connecting state here — no error text needed.
+			if (result.reason !== 'duplicate_id') {
+				status = result.reason ?? 'Connection failed.';
+			}
 			connecting = false;
 		}
 	}
