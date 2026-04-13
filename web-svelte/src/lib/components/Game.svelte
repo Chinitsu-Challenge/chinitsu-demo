@@ -11,6 +11,8 @@
 	import MessageLog from './MessageLog.svelte';
 	import ConnectionErrorOverlay from './ConnectionErrorOverlay.svelte';
 	import ErrorToast from './ErrorToast.svelte';
+	import EmotePopup from './EmotePopup.svelte';
+	import EmotePicker from './EmotePicker.svelte';
 	import { onMount } from 'svelte';
 
 	let s = $derived($gameState);
@@ -122,6 +124,7 @@
 
 	<!-- Action bar pinned to bottom -->
 	<div class="action-bar">
+		<EmotePicker />
 		{#if s.phase === 'waiting'}
 			<button class="btn btn-action" onclick={() => sendAction('start')}>Start Game</button>
 		{:else if s.phase === 'ended'}
@@ -168,6 +171,7 @@
 	<!-- 非房主离开 ENDED 房间后，房主看到的小型提示通知 -->
 	<PlayerLeftNotification />
 
+	<EmotePopup />
 	<MessageLog />
 
 	<!-- ERR_* 游戏错误提示（4 秒自动消失） -->

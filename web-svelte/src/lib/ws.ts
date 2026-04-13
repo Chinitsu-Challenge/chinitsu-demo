@@ -1,6 +1,7 @@
 import { writable, get } from 'svelte/store';
 import type { GameState, AgariData, KawaEntry, SpectatorState, SpectatorPlayerData } from './types';
 import { getToken, getUuid, getUsername } from './auth';
+import { EMOTES, showEmotePopup } from './chat';
 
 // --- Stores ---
 export const gameState = writable<GameState>({
@@ -206,6 +207,16 @@ export function sendAction(action: string, cardIdx?: number | null) {
 			card_idx: cardIdx != null ? String(cardIdx) : ''
 		})
 	);
+}
+
+export function sendChat(text: string) {
+	if (!ws || ws.readyState !== WebSocket.OPEN) return;
+	ws.send(JSON.stringify({ action: 'chat', text }));
+}
+
+export function sendEmote(emoteId: string) {
+	if (!ws || ws.readyState !== WebSocket.OPEN) return;
+	ws.send(JSON.stringify({ action: 'emote', emote_id: emoteId }));
 }
 
 // --- Connection ---
@@ -445,6 +456,24 @@ function handleBroadcastEvent(data: Record<string, unknown>) {
 		const count = data.spectator_count as number;
 		spectatorState.update((s) => ({ ...s, spectatorCount: count }));
 		logMsg(`${data.display_name as string} stopped watching (${count} watching)`, 'broadcast');
+		return;
+	}
+
+	if (event === 'chat') {
+		const dn = data.display_name as string;
+		const text = data.text as string;
+		const isMe = dn === myDisplayName;
+		logMsg(`${isMe ? 'You' : dn}: ${text}`, 'chat');
+		return;
+	}
+
+	if (event === 'emote') {
+		const dn = data.display_name as string;
+		const emoteId = data.emote_id as string;
+		const isMe = dn === myDisplayName;
+		const glyph = EMOTES[emoteId] ?? emoteId;
+		showEmotePopup(glyph, isMe);
+		logMsg(`${isMe ? 'You' : dn}: ${glyph}`, 'emote');
 		return;
 	}
 

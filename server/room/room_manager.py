@@ -30,6 +30,7 @@ from room.errors import (
     InvalidTransitionError,
 )
 from room.push_service import PushService
+from room import chat_handler
 from room.snapshot_manager import SnapshotManager
 from room.timeout_scheduler import TimeoutScheduler
 from room.ready_service import ReadyService
@@ -471,6 +472,19 @@ class RoomManager:
         action = data.get("action", "")
         card_idx_raw = data.get("card_idx", "")
         card_idx = int(card_idx_raw) if isinstance(card_idx_raw, str) and card_idx_raw.isdigit() else None
+
+        # ── 聊天 / 表情（所有状态均可用）──────────────
+        room_sessions = self.sessions.get(room_name, {})
+        if action == "chat":
+            await chat_handler.handle_chat(
+                self.push, room_sessions, room_name, user_id, data.get("text", "")
+            )
+            return
+        if action == "emote":
+            await chat_handler.handle_emote(
+                self.push, room_sessions, room_name, user_id, data.get("emote_id", "")
+            )
+            return
 
         # ── 状态级拦截 ─────────────────────────────
         if room.status == RoomStatus.RECONNECT:
