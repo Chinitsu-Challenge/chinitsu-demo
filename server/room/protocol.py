@@ -114,6 +114,28 @@ def make_reconnect_timeout(winner_id: str, loser_id: str) -> dict:
     }
 
 
+# ── 聊天 / 表情 ──────────────────────────────────────────────────
+
+def make_chat(display_name: str, text: str) -> dict:
+    """聊天消息（广播）"""
+    return {
+        "broadcast": True,
+        "event": "chat",
+        "display_name": display_name,
+        "text": text,
+    }
+
+
+def make_emote(display_name: str, emote_id: str) -> dict:
+    """表情包消息（广播）"""
+    return {
+        "broadcast": True,
+        "event": "emote",
+        "display_name": display_name,
+        "emote_id": emote_id,
+    }
+
+
 # ── 超时类事件 ──────────────────────────────────────────────────
 
 def make_timeout_warning(seconds_left: int) -> dict:
