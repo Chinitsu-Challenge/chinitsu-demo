@@ -148,7 +148,8 @@ export function sendAction(action: string, cardIdx?: number | null) {
 
 // --- Connection ---
 export function connect(
-	roomName: string
+	roomName: string,
+	options?: { vsBot?: boolean; botLevel?: string }
 ): Promise<{ ok: boolean; reason?: string }> {
 	stopWatchingHeartbeat();
 	stopSendingHeartbeat();
@@ -156,6 +157,7 @@ export function connect(
 	myId = getUuid();
 	myDisplayName = getUsername();
 	const token = getToken();
+	const { vsBot = false, botLevel = 'normal' } = options ?? {};
 
 	return new Promise((resolve) => {
 		let resolved = false;
@@ -170,7 +172,8 @@ export function connect(
 		// In dev, set VITE_WS_URL to point at the backend (e.g. ws://localhost:8000).
 		const base = import.meta.env.VITE_WS_URL
 			|| `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
-		const url = `${base}/ws/${roomName}?token=${encodeURIComponent(token)}`;
+		let url = `${base}/ws/${roomName}?token=${encodeURIComponent(token)}`;
+		if (vsBot) url += `&bot=1&level=${encodeURIComponent(botLevel)}`;
 		console.log('[ws] connecting to', url);
 		ws = new WebSocket(url);
 

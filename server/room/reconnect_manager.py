@@ -63,11 +63,12 @@ class ReconnectManager:
         await self._rm._sync_session_to_redis(session)
 
         # 检查在线人数
+        # bot 房间中 bot 无 WebSocket，online_ids 为空仅意味着人类断线，不是双方均离线
         online_ids = self._rm.push.get_online_user_ids(room_name)
-        if len(online_ids) == 0:
-            # 双方都断线 → 直接销毁
+        if len(online_ids) == 0 and not room.vs_bot:
+            # 双方都断线 → 直接销毁（用 ALL_LEFT，RUNNING 状态无 BOTH_OFFLINE 转移）
             logger.info("双方均断线，销毁房间 [%s]", room_name)
-            await self._rm._do_transition(room, RoomEvent.BOTH_OFFLINE)
+            await self._rm._do_transition(room, RoomEvent.ALL_LEFT)
             await self._rm.cleanup_room(room_name, room.room_id, "both_offline")
             return
 
@@ -114,7 +115,7 @@ class ReconnectManager:
         await self._rm._sync_session_to_redis(session)
 
         online_ids = self._rm.push.get_online_user_ids(room_name)
-        if len(online_ids) == 0:
+        if len(online_ids) == 0 and not room.vs_bot:
             logger.info("RECONNECT 中双方均断线，销毁房间 [%s]", room_name)
             # 取消所有定时器
             await self._rm.timers.cancel_prefix(f"reconnect:{room_name}")

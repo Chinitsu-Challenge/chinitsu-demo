@@ -1,142 +1,59 @@
-# CLAUDE.md
+# 项目进度（给后续 Chat 用）
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+> 由开发者在里程碑完成时更新；AI 完成任务后也应顺手更新「最近更新」与相关小节。
 
-## Commands
+## 元信息
 
-**Install Python dependencies (from project root):**
-```bash
-uv sync
-```
+| 项 | 内容 |
+|----|------|
+| 最近更新 | 2026-04-13（bot-v2 bugfix：bot 房间 online_ids 计数错误） |
+| 当前分支 | `feature/clever-chinitsu-bot-v2` |
+| 产品名 | Chinitsu Showdown — 二人实时清一色（仅索子） |
 
-**Start the backend server:**
-```bash
-cd server
-uv run python start_server.py
-```
-Listens on `0.0.0.0:8000`. API docs at `http://127.0.0.1:8000/api-docs`.
+## 当前阶段（一句话）
 
-**Download tile image assets (required once before running):**
-```bash
-cd server
-uv run python scripts/get_images.py
-```
+基线：**注册/登录 JWT + 房间 WebSocket + 局内流程 + Svelte 前端 + pytest**。main 已含 `room/` 模块化架构（RoomManager + 多子服务 + Redis）。**人机对战 v2**：完全模块化，不修改 `game.py`，bot 逻辑独立于 `room/` 架构之外。
 
-**Frontend dev server (with hot reload, proxies to backend):**
-```bash
-cd web-svelte
-npm install
-npm run dev
-```
+## 进行中
 
-**Frontend production build:**
-```bash
-cd web-svelte
-npm run build
-```
+- [ ] 更强 bot（杠、防守、牌效细化）
+- [ ] 谱面复盘：切牌建议 / 期望和了
 
-**Frontend type checking:**
-```bash
-cd web-svelte
-npm run check
-```
+## 已完成（可勾选累积）
 
-**Validate AsyncAPI specs:**
-```bash
-npx @asyncapi/cli validate docs/asyncapi.yaml
-npx @asyncapi/cli validate docs/asyncapi.zh.yaml
-```
+- [x] FastAPI 后端、`ChinitsuGame` 状态机与二人规则
+- [x] `python-mahjong` 和牌判定封装
+- [x] SQLite 用户表 + JWT WebSocket 鉴权
+- [x] SvelteKit 大厅/对局 UI、牌图资源流程
+- [x] AsyncAPI 文档与调试牌山（`debug_setting.py`）
+- [x] `room/` 模块化架构：RoomManager、state_machine、PushService、SnapshotManager、TimeoutScheduler、ReadyService、EndDecisionService、ReconnectManager、Redis 集成
+- [x] **人机对战 v2（2026-04-13）**：
+  - `server/bot_player.py`：纯函数 bot 逻辑（BOT_ID、choose_bot_action），不动 game.py
+  - `server/room/bot_service.py`：BotService 异步调度器，接入 RoomManager
+  - `server/room/models.py`：Room 加 vs_bot / bot_level 字段
+  - `server/room/room_manager.py`：注入 BotService；bot 房间单人即可 start；提取 _post_action_bookkeeping 供 bot chain 复用
+  - `server/app.py`：解析 ?bot=1&level=easy|normal|hard 查询参数
+  - 前端大厅新增「Play vs CPU」勾选框 + 难度下拉（easy/normal/hard）
+- [x] **bot 房间 online_ids 计数 bugfix（2026-04-13）**：
+  - 根因：`get_online_user_ids` 只统计有 WebSocket 的 session，bot 无 ws 故永远不计入，导致 bot 房间在线数始终 =1
+  - `room_manager.py _handle_game_action`：在线检查改为 `min_online = 1 if room.vs_bot else 2`，修复人类 ron/skip 被 ERR_GAME_PAUSED 静默拒绝的 bug
+  - `reconnect_manager.py _handle_running_disconnect`：加 `and not room.vs_bot` 防止人类断线时误判为双方均离线；顺手将 `BOTH_OFFLINE` 改为 `ALL_LEFT`（RUNNING 状态无 BOTH_OFFLINE 转移，是独立 bug）
+  - `reconnect_manager.py _handle_reconnect_disconnect`：同上加 bot 房间保护，防止 RECONNECT 状态误销毁
 
-Tests are in `tests/test_server.py`. Run with `uv run pytest -v` from the project root. Manual testing uses a browser connected to `ws://127.0.0.1:8000/ws/{room_name}?token={jwt}`, or the debug codes described below.
+## 下一步（优先级自上而下）
 
-## Architecture
+1. 复盘 UI：逐步展示「若切这张」向听/听牌或简单期望（基于谱面 `initial`+已知墙）
+2. Bot 杠与更细牌效 / 可选难度
 
-Chinitsu Showdown is a 2-player real-time mahjong game (chinitsu/清一色 variant — bamboo tiles only). The backend is a Python FastAPI app; the frontend is SvelteKit. They communicate exclusively via WebSocket.
+## 已知问题 / 技术债（可选）
 
-### Request Flow
+- 生产环境 SECRET_KEY 需替换为随机值（当前为 dev 默认值）
 
-```
-Browser (SvelteKit) ──WebSocket──▶ app.py (routes) + managers.py (ConnectionManager/GameManager)
-                                        │
-                                        ▼
-                                   game.py (ChinitsuGame / ChinitsuPlayer)
-                                        │
-                                        ▼
-                                   agari_judge.py ──▶ python-mahjong lib
-```
+## 给 Agent 快速路径
 
-### Backend (`server/`)
-
-- **`app.py`** — FastAPI app, routes (HTTP auth + WebSocket endpoint at `/ws/{room_name}`), static file mounts (`/assets`, `/api-docs`, `/`).
-- **`managers.py`** — `GameManager` owns in-memory game rooms; `ConnectionManager` routes messages and handles disconnect/reconnect (game enters `RECONNECT` state when a player drops).
-- **`game.py`** — Core engine. `ChinitsuGame` tracks game state (`WAITING=0`, `RUNNING=1`, `RECONNECT=2`, `ENDED=3`) and turn state (`BEFORE_DRAW=1`, `AFTER_DRAW=2`, `AFTER_DISCARD=3`). `ChinitsuPlayer` holds hand, kawa, fuuro, riichi/ippatsu/furiten flags. The `input(action, card_idx, player_id)` method is the single entry point for all player actions.
-- **`agari_judge.py`** — Wraps `python-mahjong`'s `HandCalculator` to validate winning hands and compute han/fu/points.
-- **`debug_setting.py`** — Predetermined tile distributions for testing. Activated by passing a debug code (`114514`, `1001`) as `card_idx` in a `start`/`start_new` action (value must be > 100).
-- **`start_server.py`** — Configures uvicorn logging and starts the app.
-
-### Frontend (`web-svelte/src/`)
-
-- **`lib/ws.ts`** — WebSocket client wrapper; all server communication goes through here.
-- **`lib/types.ts`** — Shared TypeScript types for game state.
-- **`routes/+page.svelte`** — Single page that switches between lobby and game views.
-- **`lib/components/`** — UI components: `Game`, `Lobby`, `Hand`, `OpponentHand`, `Kawa`, `Fuuro`, `Tile`, `AgariOverlay`, `MessageLog`.
-
-Vite proxies `/ws` → `ws://localhost:8000` and `/assets` → `http://localhost:8000` during development.
-
-### Tile rotation
-
-Tile images are pre-rendered at four rotations. The `rotation` prop on `<Tile>` selects the correct asset — **never use CSS `transform: rotate()` to orient tiles**.
-
-| `rotation` | Asset suffix | Dimensions | Use |
-| --- | --- | --- | --- |
-| `0` | `_0.png` | 63 × 95 (portrait) | Normal upright tile |
-| `1` | `_1.png` | 85 × 78 (landscape) | Riichi discard (player side) |
-| `2` | `_2.png` | 63 × 95 (portrait) | Opponent-side face-up tiles (kawa, fuuro) |
-| `3` | `_3.png` | 85 × 78 (landscape) | Riichi discard (opponent side) |
-
-Back tiles (`back_*.png`) follow the same numbering but rotation 0 is used for both sides — the back design is orientation-neutral.
-
-After any frontend change, run `npm run build` from `web-svelte/` before testing through FastAPI.
-
-### WebSocket Protocol
-
-Client sends: `{"action": "string", "card_idx": "string"}`
-
-Actions: `start`, `start_new`, `draw`, `discard`, `riichi`, `kan`, `tsumo`, `ron`, `skip_ron`
-
-Server responds per-player with full game state (hand, kawa, fuuro, points, turn info). Winning responses include `agari`, `han`, `fu`, `point`, `yaku` fields.
-
-No authentication — player identity is the `player_id` path parameter (max 20 chars). Room capacity is 2 players; connecting to a full room closes with code `1003`.
-
-### Default Game Rules (`game.py`)
-
-```python
-default_rules = {
-    "initial_point": 150_000,
-    "no_agari_punishment": 20_000,
-    "sort_hand": False,
-    "yaku_rules": {
-        "has_daisharin": False,
-        "renhou_as_yakuman": False,
-    }
-}
-```
-
-## API Documentation
-
-AsyncAPI specs live in `docs/`:
-
-| File | Purpose |
-|---|---|
-| `docs/asyncapi.yaml` | English spec |
-| `docs/asyncapi.zh.yaml` | Chinese spec |
-| `docs/index.html` | Viewer served at `/api-docs` |
-
-**Whenever you change the WebSocket protocol, update both spec files:**
-- New/removed action → `components/schemas/ActionType/enum`
-- Changed message payload → `components/schemas/GameStateUpdatePayload`
-- New message type → `components/messages/` + channel `oneOf`
-- New HTTP endpoint → new channel with `http` binding
-- Changed error codes → `components/schemas/ErrorCode/enum`
-
-Both files must stay in sync (same structure, different language only).
+- 改协议 → `docs/asyncapi.yaml` + `asyncapi.zh.yaml` + `ws.ts` / `types.ts`
+- 改规则/番符 → `server/game.py`、`server/agari_judge.py`、`RULES.md`
+- 改 bot 逻辑 → `server/bot_player.py`（纯函数，不依赖房间层）
+- 改 bot 调度 → `server/room/bot_service.py`
+- 只跑后端测试 → 项目根 `uv run pytest -v`
+- 前端改完走 FastAPI 静态站 → `web-svelte` 下 **`npm run build`**

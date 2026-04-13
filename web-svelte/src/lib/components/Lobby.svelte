@@ -10,6 +10,8 @@
 	let roomName = $state('');
 	let status = $state('');
 	let connecting = $state(false);
+	let vsBot = $state(false);
+	let botLevel = $state('normal');
 
 	const username = getUsername();
 
@@ -20,7 +22,7 @@
 		}
 		status = 'Connecting...';
 		connecting = true;
-		const result = await connect(roomName.trim());
+		const result = await connect(roomName.trim(), { vsBot, botLevel });
 		if (!result.ok) {
 			// duplicate_id: +page.svelte switches to the dedicated waiting screen,
 			// so we just clear the connecting state here — no error text needed.
@@ -58,6 +60,19 @@
 				placeholder="Room to join"
 			/>
 		</div>
+		<div class="form-group bot-row">
+			<label class="checkbox-label">
+				<input type="checkbox" bind:checked={vsBot} />
+				Play vs CPU
+			</label>
+			{#if vsBot}
+				<select bind:value={botLevel} class="level-select">
+					<option value="easy">Easy</option>
+					<option value="normal">Normal</option>
+					<option value="hard">Hard</option>
+				</select>
+			{/if}
+		</div>
 		<button class="btn btn-primary" disabled={connecting} onclick={handleConnect}>Connect</button>
 		{#if status}
 			<p class="status-msg">{status}</p>
@@ -86,5 +101,33 @@
 	}
 	.link-btn:hover {
 		color: #81d4fa;
+	}
+	.bot-row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+	.checkbox-label {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.9rem;
+		color: #ccc;
+		cursor: pointer;
+		user-select: none;
+	}
+	.checkbox-label input[type='checkbox'] {
+		width: 1rem;
+		height: 1rem;
+		cursor: pointer;
+	}
+	.level-select {
+		background: #1e2a38;
+		color: #e0e0e0;
+		border: 1px solid #4fc3f7;
+		border-radius: 4px;
+		padding: 0.25rem 0.5rem;
+		font-size: 0.85rem;
+		cursor: pointer;
 	}
 </style>

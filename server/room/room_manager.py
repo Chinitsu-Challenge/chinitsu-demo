@@ -35,7 +35,9 @@ from room.timeout_scheduler import TimeoutScheduler
 from room.ready_service import ReadyService
 from room.end_decision_service import EndDecisionService
 from room.reconnect_manager import ReconnectManager
+from room.bot_service import BotService
 from room import match_end_evaluator
+from bot_player import BOT_ID
 
 logger = logging.getLogger("uvicorn")
 
@@ -70,13 +72,20 @@ class RoomManager:
         self.ready_svc = ReadyService()
         self.end_svc = EndDecisionService()
         self.reconnect_mgr = ReconnectManager(self)
+        self.bot_svc = BotService(self)
 
     # ================================================================
     # 公开接口：connect / disconnect / handle_action
     # ================================================================
 
     async def connect(
-        self, ws: WebSocket, room_name: str, user_id: str, display_name: str
+        self,
+        ws: WebSocket,
+        room_name: str,
+        user_id: str,
+        display_name: str,
+        vs_bot: bool = False,
+        bot_level: str = "normal",
     ) -> bool:
         """
         玩家建立 WebSocket 连接时调用。
@@ -214,7 +223,7 @@ class RoomManager:
 
         if room is None:
             # 场景 3：房间不存在 → 创建房间
-            await self._create_room(ws, room_name, user_id, display_name)
+            await self._create_room(ws, room_name, user_id, display_name, vs_bot, bot_level)
         else:
             # 场景 4：房间存在且有空位 → 加入
             await self._join_room(ws, room, user_id, display_name)
@@ -309,22 +318,33 @@ class RoomManager:
     # ================================================================
 
     async def _create_room(
-        self, ws: WebSocket, room_name: str, user_id: str, display_name: str
+        self,
+        ws: WebSocket,
+        room_name: str,
+        user_id: str,
+        display_name: str,
+        vs_bot: bool = False,
+        bot_level: str = "normal",
     ) -> None:
         """创建新房间（[空] → WAITING）"""
         now = time.time()
         room_id = str(uuid.uuid4())
+
+        # vs_bot 房间：把 BOT_ID 直接加入 player_ids，房间立即满员
+        player_ids = [user_id, BOT_ID] if vs_bot else [user_id]
 
         room = Room(
             room_id=room_id,
             room_name=room_name,
             status=RoomStatus.WAITING,
             owner_id=user_id,
-            player_ids=[user_id],
+            player_ids=player_ids,
             created_at=now,
             updated_at=now,
             expires_at=now + ROOM_MAX_LIFETIME_SEC,
             round_limit=DEFAULT_ROUND_LIMIT,
+            vs_bot=vs_bot,
+            bot_level=bot_level,
         )
         self.rooms[room_name] = room
 
@@ -362,7 +382,14 @@ class RoomManager:
             "is_owner": True,
         })
 
-        logger.info("房间创建 [%s] 房主=%s(%s)", room_name, display_name, user_id[:8])
+        # vs_bot 房间：额外推送一个 player_joined 事件，让前端知道对手是 CPU
+        if vs_bot:
+            await self.push.unicast(
+                room_name, user_id,
+                protocol.make_player_joined("CPU", room_name, 2),
+            )
+
+        logger.info("房间创建 [%s] 房主=%s(%s) vs_bot=%s", room_name, display_name, user_id[:8], vs_bot)
 
     async def _join_room(
         self, ws: WebSocket, room: Room, user_id: str, display_name: str
@@ -477,9 +504,17 @@ class RoomManager:
     async def _handle_start(self, room: Room, user_id: str, card_idx: int | None) -> None:
         """
         WAITING 中处理 start 请求。
-        使用 ReadyService 管理双确认。
+        - 人机房间：单人立即开始
+        - 双人房间：使用 ReadyService 管理双确认
         """
         room_name = room.room_name
+
+        # vs_bot：单人立即开始，跳过 ReadyService
+        if room.vs_bot:
+            debug_code = card_idx if card_idx and card_idx > 100 else None
+            await self._start_game(room, debug_code)
+            return
+
         online_ids = self.push.get_online_user_ids(room_name)
 
         if len(online_ids) < 2:
@@ -515,7 +550,9 @@ class RoomManager:
     async def _handle_round_restart(self, room: Room, user_id: str, card_idx: int | None) -> None:
         """
         RUNNING 中处理 start / start_new（轮次间重启）。
-        当前轮结束后（game.status==ENDED），双方通过 start_new 开始下一轮。
+        当前轮结束后（game.status==ENDED），玩家通过 start_new 开始下一轮。
+        - 人机房间：单人确认即可开始下一轮
+        - 双人房间：双方确认
         """
         room_name = room.room_name
         game = self.games.get(room_name)
@@ -527,6 +564,12 @@ class RoomManager:
         if not game.is_ended:
             await self.push.unicast(room_name, user_id,
                                     protocol.make_error(ERR_ROUND_NOT_ENDED))
+            return
+
+        # vs_bot：单人立即开始下一轮
+        if room.vs_bot:
+            debug_code = card_idx if card_idx and card_idx > 100 else None
+            await self._start_next_round(room, game, debug_code)
             return
 
         online_ids = self.push.get_online_user_ids(room_name)
@@ -560,18 +603,19 @@ class RoomManager:
     async def _handle_continue_game(self, room: Room, user_id: str) -> None:
         """ENDED 中处理 continue_game"""
         room_name = room.room_name
-        online_ids = self.push.get_online_user_ids(room_name)
 
-        result = self.end_svc.choose_continue(room_name, user_id, online_ids)
+        # vs_bot：单人决定即可继续
+        if not room.vs_bot:
+            online_ids = self.push.get_online_user_ids(room_name)
+            result = self.end_svc.choose_continue(room_name, user_id, online_ids)
+            if not result.all_continue:
+                await self.push.broadcast(room_name, protocol.make_continue_vote_changed(
+                    continue_user_ids=result.continue_ids,
+                    all_continue=False,
+                ))
+                return
 
-        if not result.all_continue:
-            await self.push.broadcast(room_name, protocol.make_continue_vote_changed(
-                continue_user_ids=result.continue_ids,
-                all_continue=False,
-            ))
-            return
-
-        # 双方都选择继续 → 回到 WAITING
+        # 双方（或单人 bot 模式）都选择继续 → 回到 WAITING
         self.end_svc.clear(room_name)
         self.ready_svc.clear(room_name)
 
@@ -645,8 +689,10 @@ class RoomManager:
             return
 
         # 确保有 2 名在线玩家（防止 RUNNING 但对手刚断线瞬间的操作）
+        # bot 房间中 bot 无 WebSocket，不计入在线数，只需确保真实玩家在线
         online_ids = self.push.get_online_user_ids(room_name)
-        if len(online_ids) < 2:
+        min_online = 1 if room.vs_bot else 2
+        if len(online_ids) < min_online:
             await self.push.unicast(room_name, user_id,
                                     protocol.make_error(ERR_GAME_PAUSED))
             return
@@ -673,15 +719,31 @@ class RoomManager:
             await self.push.unicast(room_name, target_id, info)
 
         # ── 游戏后续处理 ──────────────────────────
-        # 检查该轮是否结束
+        await self._post_action_bookkeeping(room, game)
+
+        # vs_bot：若游戏仍在运行，调度 bot 继续行动
+        if room.vs_bot and not game.is_ended:
+            self.bot_svc.schedule(room_name)
+
+    async def _post_action_bookkeeping(self, room: Room, game: "ChinitsuGame") -> None:
+        """
+        每次游戏层 action 处理完毕后的公共后置逻辑：
+        1. 若本轮刚结束，增加轮次计数
+        2. 保存快照
+        3. 若本轮结束，评估比赛是否应该终止
+        由 _handle_game_action 和 BotService._run_chain 共同调用。
+        """
+        room_name = room.room_name
         round_just_ended = game.is_ended
 
         if round_just_ended:
-            # 本轮结束，增加轮次计数
             room.round_no += 1
             logger.info("第 %d 轮结束 [%s]", room.round_no, room_name)
 
+<<<<<<< HEAD
         # 保存快照，并推送旁观者更新
+=======
+>>>>>>> 8ab618b ((1)introduce bot-player with 3 different levels: Easy, Normal, Hard. Also realized under leader mdc's command, the bot is a seperate module and there is no modifiaction for game.py. (2) fix(?)bot room online, when human player disconnect or reload the page, the opponent would appear as ??? and couldn't connect to the previous game, now this problem got solved by modifying min_onlie = 1 if room.vs_bot else 2. (3) ANd the previous reload bug seems to be my fault that after I run uv sync then the game can start normally. Details can be found in CLAUDE.md located under the project root, not the one under server dir.)
         snapshot = self.snapshot_mgr.serialize_game(
             game, room_name, room.round_no, room.round_limit,
             display_names=self.get_display_names(room_name),
@@ -689,7 +751,6 @@ class RoomManager:
         await self.snapshot_mgr.save_snapshot(room_name, snapshot)
         await self._push_spectator_update(room_name, snapshot)
 
-        # 评估比赛是否应该结束
         if round_just_ended:
             decision = match_end_evaluator.evaluate(snapshot)
             if decision.should_end:
@@ -749,7 +810,7 @@ class RoomManager:
         room.game_id = room_name
         room.round_no = 0
 
-        # 构建初始游戏状态并发送给双方
+        # 构建初始游戏状态并发送给双方（bot unicast 静默忽略）
         await self._send_game_start_state(room, game)
 
         # 保存初始快照，并推送旁观者更新
@@ -760,7 +821,11 @@ class RoomManager:
         await self.snapshot_mgr.save_snapshot(room_name, snapshot)
         await self._push_spectator_update(room_name, snapshot)
 
-        logger.info("游戏开始 [%s] 玩家=%s", room_name, room.player_ids)
+        # vs_bot：若 bot 是庄家（先行），立即调度 bot
+        if room.vs_bot and game.state.current_player == BOT_ID:
+            self.bot_svc.schedule(room_name)
+
+        logger.info("游戏开始 [%s] 玩家=%s vs_bot=%s", room_name, room.player_ids, room.vs_bot)
 
     async def _start_next_round(
         self, room: Room, game: ChinitsuGame, debug_code: int | None = None
@@ -784,6 +849,10 @@ class RoomManager:
         )
         await self.snapshot_mgr.save_snapshot(room_name, snapshot)
         await self._push_spectator_update(room_name, snapshot)
+
+        # vs_bot：若 bot 是庄家，调度 bot
+        if room.vs_bot and game.state.current_player == BOT_ID:
+            self.bot_svc.schedule(room_name)
 
         logger.info("第 %d 轮开始 [%s]", room.round_no + 1, room_name)
 
@@ -860,6 +929,7 @@ class RoomManager:
         # 清理子服务数据
         self.ready_svc.cleanup_room(room_name)
         self.end_svc.cleanup_room(room_name)
+        self.bot_svc.cleanup_room(room_name)
         await self.snapshot_mgr.delete_snapshot(room_name)
 
         # 清理 Redis
@@ -910,10 +980,15 @@ class RoomManager:
 
     def get_display_names(self, room_name: str) -> dict[str, str]:
         """从 session 中获取房间内所有玩家的昵称映射 {user_id: display_name}"""
-        return {
+        names = {
             uid: s.display_name
             for uid, s in self.sessions.get(room_name, {}).items()
         }
+        # vs_bot 房间：补充 bot 的显示名
+        room = self.rooms.get(room_name)
+        if room and room.vs_bot:
+            names[BOT_ID] = "CPU"
+        return names
 
     def _remove_player_from_room(self, room_name: str, user_id: str) -> None:
         """从房间中移除玩家（仅用于 WAITING/ENDED 断线）"""

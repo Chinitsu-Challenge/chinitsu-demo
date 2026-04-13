@@ -95,7 +95,13 @@ async def api_active_room(authorization: str = Header(default="")):
 
 
 @app.websocket("/ws/{room_name}")
-async def websocket_endpoint(websocket: WebSocket, room_name: str, token: str = Query("")):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    room_name: str,
+    token: str = Query(""),
+    bot: str = Query(""),
+    level: str = Query("normal"),
+):
     # 验证 JWT token
     payload = verify_token(token)
     if payload is None:
@@ -106,8 +112,18 @@ async def websocket_endpoint(websocket: WebSocket, room_name: str, token: str = 
     player_id = payload["uuid"]
     display_name = payload["username"]
 
+    # bot=1 表示人机对战；level 支持 easy / normal / hard
+    vs_bot = (bot == "1")
+    bot_level = level if level in ("easy", "normal", "hard") else "normal"
+
     # 连接到房间（RoomManager 处理创建/加入/重连）
-    if not await manager.connect(websocket, room_name, player_id, display_name):
+    try:
+        connected = await manager.connect(websocket, room_name, player_id, display_name,
+                                          vs_bot=vs_bot, bot_level=bot_level)
+    except Exception:
+        logger.exception("manager.connect 异常 [%s/%s]", room_name, player_id[:8])
+        return
+    if not connected:
         return
 
     try:

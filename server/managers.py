@@ -36,14 +36,23 @@ class ConnectionManager:
         self.room_manager = room_manager
 
     async def connect(
-        self, websocket: WebSocket, room_name: str, player_id: str, display_name: str = ""
+        self,
+        websocket: WebSocket,
+        room_name: str,
+        player_id: str,
+        display_name: str = "",
+        vs_bot: bool = False,
+        bot_level: str = "normal",
     ) -> bool:
         """
         玩家连接入口。
         委托给 RoomManager.connect()，由其处理创建/加入/重连逻辑。
         """
         display_name = display_name or player_id
-        return await self.room_manager.connect(websocket, room_name, player_id, display_name)
+        return await self.room_manager.connect(
+            websocket, room_name, player_id, display_name,
+            vs_bot=vs_bot, bot_level=bot_level,
+        )
 
     async def disconnect(self, websocket: WebSocket, room_name: str, player_id: str):
         """
