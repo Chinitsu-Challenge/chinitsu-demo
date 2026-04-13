@@ -131,6 +131,8 @@ class Room:
     continue_user_ids: set[str] = field(default_factory=set)   # ENDED 中已 continue 的玩家
     round_no: int = 0                           # 当前已完成的轮数
     round_limit: int = DEFAULT_ROUND_LIMIT      # 比赛轮数上限
+    vs_bot: bool = False                        # 是否为人机对战房间
+    bot_level: str = "normal"                   # bot 难度：easy / normal / hard
 
     def __post_init__(self):
         if self.expires_at == 0.0:
@@ -167,6 +169,8 @@ class Room:
             "continue_user_ids": json.dumps(list(self.continue_user_ids)),
             "round_no": str(self.round_no),
             "round_limit": str(self.round_limit),
+            "vs_bot": "true" if self.vs_bot else "false",
+            "bot_level": self.bot_level,
         }
 
     @classmethod
@@ -189,4 +193,6 @@ class Room:
             continue_user_ids=set(json.loads(data.get("continue_user_ids", "[]"))),
             round_no=int(data.get("round_no", 0)),
             round_limit=int(data.get("round_limit", DEFAULT_ROUND_LIMIT)),
+            vs_bot=data.get("vs_bot", "false") == "true",
+            bot_level=data.get("bot_level", "normal"),
         )
