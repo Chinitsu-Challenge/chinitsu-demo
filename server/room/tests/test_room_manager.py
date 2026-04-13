@@ -102,17 +102,19 @@ class TestConnect:
 
         run_async(inner())
 
-    def test_third_player_rejected_room_full(self):
-        """房间满员后第三个玩家被拒绝"""
+    def test_third_connection_becomes_spectator(self):
+        """房间满员后第三个连接者自动成为旁观者（不再拒绝）"""
         async def inner():
             rm, ws_alice, ws_bob = await setup_two_player_room()
             ws_charlie = MockWebSocket("charlie")
 
             result = await rm.connect(ws_charlie, "testroom", "uid-charlie", "Charlie")
 
-            assert result is False
-            assert ws_charlie.closed is True
-            assert ws_charlie.close_code == 1003
+            assert result is True
+            assert not ws_charlie.closed
+            # 进入旁观者列表而非玩家列表
+            assert rm._get_spectator("testroom", "uid-charlie") is not None
+            assert "uid-charlie" not in rm.sessions.get("testroom", {})
 
         run_async(inner())
 

@@ -156,6 +156,57 @@ class SnapshotManager:
             "opponent": opponent,
         }
 
+    @staticmethod
+    def build_spectator_view(snapshot: dict) -> dict:
+        """
+        生成旁观者全知视角快照。
+        与 build_player_view 的区别：
+        - players 字典中两名玩家的手牌均完整暴露（无隐藏）
+        - 无 me/opponent 结构，直接按 user_id 索引
+        - 使用 event: spectator_snapshot（初次发送）或调用方改为 spectator_game_update（后续更新）
+        """
+        players = snapshot.get("players", {})
+        all_pids = list(players.keys())
+        raw_current = snapshot.get("current_player_id", "")
+        turn_stage = snapshot.get("turn_stage", "")
+
+        # 同 build_player_view 的 frontend currentPlayer 约定
+        if turn_stage == "after_discard" and raw_current and len(all_pids) == 2:
+            frontend_current_player = next(
+                (pid for pid in all_pids if pid != raw_current), raw_current
+            )
+        else:
+            frontend_current_player = raw_current
+
+        # 旁观者看到双方完整信息（手牌不隐藏）
+        spectator_players = {}
+        for pid, pdata in players.items():
+            spectator_players[pid] = {
+                "display_name": pdata.get("display_name", ""),
+                "hand":         pdata.get("hand", []),
+                "fuuro":        pdata.get("fuuro", []),
+                "kawa":         pdata.get("kawa", []),
+                "point":        pdata.get("point", 0),
+                "is_oya":       pdata.get("is_oya", False),
+                "is_riichi":    pdata.get("is_riichi", False),
+                "num_kan":      pdata.get("num_kan", 0),
+            }
+
+        return {
+            "event":            "spectator_snapshot",
+            "broadcast":        False,
+            "game_status":      snapshot.get("game_status", ""),
+            "turn_stage":       turn_stage,
+            "current_player":   frontend_current_player,
+            "turn_number":      snapshot.get("turn_number", 0),
+            "round_no":         snapshot.get("round_no", 0),
+            "round_limit":      snapshot.get("round_limit", 8),
+            "wall_count":       snapshot.get("wall_count", 0),
+            "kyoutaku_number":  snapshot.get("kyoutaku_number", 0),
+            "tsumi_number":     snapshot.get("tsumi_number", 0),
+            "players":          spectator_players,
+        }
+
     # ── 持久化：保存/加载快照 ──────────────────────────────────
 
     async def save_snapshot(self, room_name: str, snapshot: dict) -> None:

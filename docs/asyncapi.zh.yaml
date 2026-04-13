@@ -67,6 +67,7 @@ channels:
       | 1001 | `room_expired` | 房间 40 分钟寿命到期 |
       | 1001 | `room_closed` | 房间销毁（end_game / 双方断线）|
       | 1003 | `room_full` | 房间已有 2 名活跃玩家 |
+      | 1003 | `spectator_room_full` | 旁观者人数已达上限（10 人）|
       | 1003 | `duplicate_id` | 该玩家已在线 |
       | 1003 | `invalid_room_name` | 房间名为空或超过 20 字符 |
       | 1003 | `already_in_room` | 玩家在另一个房间中已有活跃会话 |
@@ -104,6 +105,9 @@ channels:
           - $ref: '#/components/messages/EvtReconnectTimeout'
           - $ref: '#/components/messages/EvtRoomExpired'
           - $ref: '#/components/messages/EvtRoomClosed'
+          # — 旁观者（广播给全员）—
+          - $ref: '#/components/messages/EvtSpectatorJoined'
+          - $ref: '#/components/messages/EvtSpectatorLeft'
           # — 连接（单播）—
           - $ref: '#/components/messages/EvtRoomCreated'
           - $ref: '#/components/messages/EvtOpponentDisconnected'
@@ -113,6 +117,9 @@ channels:
           - $ref: '#/components/messages/EvtGameStarted'
           - $ref: '#/components/messages/EvtGameSnapshot'
           - $ref: '#/components/messages/GameActionResponse'
+          # — 旁观者视图（单播给旁观者）—
+          - $ref: '#/components/messages/EvtSpectatorSnapshot'
+          - $ref: '#/components/messages/EvtSpectatorGameUpdate'
 
   # ── HTTP：注册 ──────────────────────────────────────────────────────────────
   /api/register:
@@ -311,6 +318,45 @@ components:
       summary: 房间因非到期原因销毁（如玩家调用 end_game）。
       payload:
         $ref: '#/components/schemas/RoomClosedPayload'
+
+    # ── 服务端 → 客户端：旁观者广播事件 ─────────────────────────────────────
+
+    EvtSpectatorJoined:
+      name: EvtSpectatorJoined
+      title: 旁观者加入
+      summary: |
+        有旁观者加入房间，发送给房间内所有玩家及旁观者。
+      payload:
+        $ref: '#/components/schemas/SpectatorJoinedPayload'
+
+    EvtSpectatorLeft:
+      name: EvtSpectatorLeft
+      title: 旁观者离开
+      summary: |
+        有旁观者断线，发送给房间内所有玩家及旁观者。
+      payload:
+        $ref: '#/components/schemas/SpectatorLeftPayload'
+
+    # ── 服务端 → 客户端：旁观者单播事件 ─────────────────────────────────────
+
+    EvtSpectatorSnapshot:
+      name: EvtSpectatorSnapshot
+      title: 旁观者快照
+      summary: |
+        旁观者加入时发送的全知视角游戏状态。
+        双方手牌完全可见。仅在游戏进行中（RUNNING）发送；
+        游戏未开始时发送普通等待消息。
+      payload:
+        $ref: '#/components/schemas/SpectatorSnapshotPayload'
+
+    EvtSpectatorGameUpdate:
+      name: EvtSpectatorGameUpdate
+      title: 旁观者游戏更新
+      summary: |
+        每次游戏动作后推送给所有旁观者的全知视角状态。
+        与 `spectator_snapshot` 使用相同 schema，事件名为 `spectator_game_update`。
+      payload:
+        $ref: '#/components/schemas/SpectatorSnapshotPayload'
 
     # ── 服务端 → 客户端：单播事件（broadcast=false）─────────────────────────
 
@@ -963,6 +1009,138 @@ components:
         'uuid-alice': [['5s', false], ['3s', true]]
         'uuid-bob': [['7s', false]]
 
+    # ── 旁观者 schema ──────────────────────────────────────────────────────────
+
+    SpectatorJoinedPayload:
+      type: object
+      required: [broadcast, event, display_name, spectator_count]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [spectator_joined]
+        display_name:
+          type: string
+          description: 加入的旁观者昵称。
+          example: 'Charlie'
+        spectator_count:
+          type: integer
+          description: 加入后房间的旁观者总数。
+          example: 1
+
+    SpectatorLeftPayload:
+      type: object
+      required: [broadcast, event, display_name, spectator_count]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [spectator_left]
+        display_name:
+          type: string
+          description: 离开的旁观者昵称。
+        spectator_count:
+          type: integer
+          description: 离开后剩余旁观者数量。
+          example: 0
+
+    SpectatorSnapshotPayload:
+      type: object
+      required:
+        - broadcast
+        - event
+        - game_status
+        - turn_stage
+        - current_player
+        - wall_count
+        - round_no
+        - round_limit
+        - kyoutaku_number
+        - spectator_count
+        - players
+      description: |
+        发送给旁观者的全知视角游戏状态。
+        所有玩家手牌完全可见。
+        `current_player` 遵循与玩家快照相同的 after_discard 约定。
+        用于 `spectator_snapshot`（加入时）和 `spectator_game_update`（动作后）两种事件。
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
+        event:
+          type: string
+          enum: [spectator_snapshot, spectator_game_update]
+        game_status:
+          type: string
+          enum: [waiting, running, reconnect, ended]
+        turn_stage:
+          type: string
+          nullable: true
+          enum: [before_draw, after_draw, after_discard]
+        current_player:
+          type: string
+          nullable: true
+          description: 当前应行动玩家的 UUID。
+        wall_count:
+          type: integer
+        round_no:
+          type: integer
+          description: 已完成轮数（从 0 开始）。
+        round_limit:
+          type: integer
+        kyoutaku_number:
+          type: integer
+          description: 桌上的立直棒数量。
+        spectator_count:
+          type: integer
+          description: 当前旁观者数量。
+        players:
+          type: object
+          description: 所有玩家的完整数据，以 UUID 为键。
+          additionalProperties:
+            $ref: '#/components/schemas/SpectatorPlayerView'
+
+    SpectatorPlayerView:
+      type: object
+      description: 旁观者视角下单个玩家的完整（全知）数据。
+      required: [display_name, hand, fuuro, kawa, point, is_oya, is_riichi, num_kan]
+      properties:
+        display_name:
+          type: string
+        hand:
+          type: array
+          items:
+            type: string
+          description: 完整手牌（明示所有牌）。
+        fuuro:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+          description: 已声明的副露（杠）牌组。
+        kawa:
+          type: array
+          items:
+            type: array
+            prefixItems:
+              - type: string
+              - type: boolean
+          description: 牌河；每条记录格式为 `[牌标识, 是否为立直时打出]`。
+        point:
+          type: integer
+        is_oya:
+          type: boolean
+        is_riichi:
+          type: boolean
+        num_kan:
+          type: integer
+          description: 该玩家已宣告的杠数。
+
     # ── 错误码 ─────────────────────────────────────────────────────────────────
 
     ErrorCode:
@@ -971,14 +1149,15 @@ components:
         动作被拒绝时在 error 事件的 `code` 字段中返回的错误码。
 
         **房间层错误：**
-        | 错误码             | 原因 |
-        |--------------------|------|
-        | game_not_started   | WAITING 状态下发送了游戏动作 |
-        | game_paused        | RECONNECT 状态下发送了游戏动作 |
-        | game_ended         | ENDED 状态下发送了非法动作 |
-        | round_not_ended    | 本轮未结束时发送了 `start_new` |
-        | not_enough_players | 在线人数不足 2 时发送了 `start` |
-        | unknown_action     | 未识别的动作字符串 |
+        | 错误码                       | 原因 |
+        |------------------------------|------|
+        | game_not_started             | WAITING 状态下发送了游戏动作 |
+        | game_paused                  | RECONNECT 状态下发送了游戏动作 |
+        | game_ended                   | ENDED 状态下发送了非法动作 |
+        | round_not_ended              | 本轮未结束时发送了 `start_new` |
+        | not_enough_players           | 在线人数不足 2 时发送了 `start` |
+        | unknown_action               | 未识别的动作字符串 |
+        | spectator_action_forbidden   | 旁观者发送了任何动作（旁观者为只读角色）|
 
         **游戏层错误**（回合/阶段校验）：
         | 错误码            | 原因 |
@@ -1008,3 +1187,4 @@ components:
         - illegal_riichi
         - illegal_tsumo
         - illegal_ron
+        - spectator_action_forbidden

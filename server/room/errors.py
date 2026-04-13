@@ -12,10 +12,11 @@ WS_CLOSE_ROOM_EXPIRED    = (1001, "room_expired")       # 房间 40 分钟到期
 WS_CLOSE_ROOM_CLOSED     = (1001, "room_closed")        # 房间被关闭（end_game / 双方断线）
 
 # code 1003: 连接被拒绝（客户端操作不合法）
-WS_CLOSE_ROOM_FULL       = (1003, "room_full")          # 房间已满（2 人）
-WS_CLOSE_DUPLICATE_ID    = (1003, "duplicate_id")       # 同一 user_id 已在线
-WS_CLOSE_INVALID_ROOM    = (1003, "invalid_room_name")  # 房间名不合法
-WS_CLOSE_ALREADY_IN_ROOM = (1003, "already_in_room")    # 玩家已在另一个房间中
+WS_CLOSE_ROOM_FULL            = (1003, "room_full")             # 房间玩家已满（2 人，且不允许旁观）
+WS_CLOSE_DUPLICATE_ID         = (1003, "duplicate_id")          # 同一 user_id 已在线
+WS_CLOSE_INVALID_ROOM         = (1003, "invalid_room_name")     # 房间名不合法
+WS_CLOSE_ALREADY_IN_ROOM      = (1003, "already_in_room")       # 玩家已在另一个房间中
+WS_CLOSE_SPECTATOR_ROOM_FULL  = (1003, "spectator_room_full")   # 旁观者席位已满（上限 10）
 
 # code 1008: 策略违反（认证失败）
 WS_CLOSE_INVALID_TOKEN   = (1008, "invalid_token")      # JWT 无效
@@ -34,7 +35,8 @@ ERR_ROUND_NOT_ENDED   = "round_not_ended"       # 当前轮次尚未结束
 ERR_NOT_ENOUGH_PLAYERS = "not_enough_players"   # 不足 2 人无法开始
 
 # 操作类
-ERR_UNKNOWN_ACTION    = "unknown_action"        # 未知的 action 类型
+ERR_UNKNOWN_ACTION              = "unknown_action"               # 未知的 action 类型
+ERR_SPECTATOR_ACTION_FORBIDDEN  = "spectator_action_forbidden"   # 旁观者不能发送游戏动作
 
 
 # ── 异常类 ──────────────────────────────────────────────────────
