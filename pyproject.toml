@@ -20,7 +20,8 @@ dependencies = [
 test = ["pytest", "httpx"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "server/room/tests"]
+pythonpath = ["server", "server/room/tests"]
 
 [dependency-groups]
 dev = [

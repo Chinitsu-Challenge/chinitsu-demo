@@ -25,11 +25,8 @@ jobs:
 
       # auth.py (feat/login) needs a writable directory for the SQLite DB.
       # The conftest.py already ensures the assets/ directory exists.
-      - name: Run integration tests (tests/)
-        run: uv run pytest tests/ -v
-
-      - name: Run room module unit tests (server/room/tests/)
-        run: uv run pytest server/room/tests/ -v
+      - name: Run tests
+        run: uv run pytest -v
 
   frontend:
     name: Frontend (SvelteKit)
