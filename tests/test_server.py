@@ -141,18 +141,27 @@ class TestConnection:
         assert msg1.get("event") == "player_joined"
         assert msg1 == msg2
 
-    def test_third_player_rejected_room_full(self, client):
+    def test_third_connection_becomes_spectator(self, client):
+        """Third connection to a full room is admitted as a spectator, not rejected."""
         room = _uid()
         t1, t2, t3 = _register(client, _uid()), _register(client, _uid()), _register(client, _uid())
         with client.websocket_connect(f"/ws/{room}?token={t1}") as ws1:
-            ws1.receive_json()
+            ws1.receive_json()  # room_created
             with client.websocket_connect(f"/ws/{room}?token={t2}") as ws2:
-                ws1.receive_json()
-                ws2.receive_json()
+                ws1.receive_json()  # player_joined (broadcast)
+                ws2.receive_json()  # player_joined (broadcast)
                 with client.websocket_connect(f"/ws/{room}?token={t3}") as ws3:
-                    with pytest.raises(WebSocketDisconnect) as exc:
-                        ws3.receive_json()
-                    assert exc.value.code == 1003
+                    # broadcast() fans out to players AND the spectator itself
+                    joined1 = ws1.receive_json()
+                    joined2 = ws2.receive_json()
+                    joined3 = ws3.receive_json()
+                    assert joined1["event"] == "spectator_joined"
+                    assert joined1["spectator_count"] == 1
+                    assert joined1 == joined2 == joined3
+                    # Spectator then receives the initial state snapshot
+                    snap = ws3.receive_json()
+                    assert snap["event"] == "spectator_snapshot"
+                    assert snap["game_status"] == "waiting"
 
     def test_duplicate_player_id_rejected(self, client):
         """Same user (same UUID from JWT) cannot join the same room twice."""
