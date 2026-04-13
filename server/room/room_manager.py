@@ -144,6 +144,27 @@ class RoomManager:
                 logger.info("WAITING 中玩家重连 [%s] %s(%s)", room_name, display_name, user_id[:8])
                 return True
 
+        # ── 场景 1d：RUNNING 中离线玩家极速重连（竞态保护）─────────
+        # 问题：on_disconnect() 中，session.mark_offline() 与
+        # room 状态机切换到 RECONNECT 之间存在多个 await 点。
+        # 若玩家在这个窗口内重连，此时 room.status 仍为 RUNNING，
+        # 场景 1（RECONNECT 检查）不会命中，最终落入 is_full → 旁观者分支。
+        # 此场景在满员检查之前明确捕获，将该玩家视作重连而非旁观者。
+        if room is not None and room.status == RoomStatus.RUNNING:
+            session = self.get_session(room_name, user_id)
+            if session is not None and not session.online and user_id in room.player_ids:
+                if not ws_accepted:
+                    await ws.accept()
+                    ws_accepted = True
+                session.mark_online(ws)
+                await self._sync_session_to_redis(session)
+                snapshot = await self.snapshot_mgr.load_snapshot(room_name)
+                if snapshot:
+                    player_view = self.snapshot_mgr.build_player_view(snapshot, user_id)
+                    await self.push.unicast(room_name, user_id, player_view)
+                logger.info("RUNNING 竞态重连 [%s] %s(%s)", room_name, display_name, user_id[:8])
+                return True
+
         # ── 一人一房间限制 ─────────────────────────────────────────
         # 检查玩家是否已在其他房间（含 RECONNECT/ENDED 中的离线玩家）
         active_room = self.get_user_active_room(user_id)
@@ -179,8 +200,8 @@ class RoomManager:
                     await ws.close(code=code, reason=reason)
                     return False
 
-            # 满员 → 以旁观者身份加入
-            if room.is_full:
+            # 满员 → 以旁观者身份加入（房间内的现有玩家不受此限制）
+            if room.is_full and user_id not in room.player_ids:
                 if not ws_accepted:
                     await ws.accept()
                     ws_accepted = True
