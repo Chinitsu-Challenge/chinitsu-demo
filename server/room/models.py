@@ -88,6 +88,28 @@ class PlayerSession:
         }
 
 
+# ── 旁观者会话 ──────────────────────────────────────────────────
+@dataclass
+class SpectatorSession:
+    """
+    旁观者会话对象。
+    与 PlayerSession 的关键区别：
+    - 不持久化到 Redis（断线即离开，无会话恢复）
+    - 无在线/离线状态区分（ws 为 None 即已离开）
+    - 无 connection_id（无需防旧连接误触发）
+    - 不参与状态机、投票、断线重连逻辑
+    """
+    user_id: str                            # 用户唯一标识（来自 JWT）
+    display_name: str                       # 昵称
+    room_name: str                          # 所在房间名
+    ws: "WebSocket | None" = None           # 当前 WebSocket 连接
+    joined_at: float = field(default_factory=time.time)
+
+
+# ── 旁观者数量上限 ───────────────────────────────────────────────
+MAX_SPECTATORS_PER_ROOM = 10
+
+
 # ── 房间对象 ────────────────────────────────────────────────────
 @dataclass
 class Room:

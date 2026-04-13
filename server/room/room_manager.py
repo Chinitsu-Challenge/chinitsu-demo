@@ -15,16 +15,18 @@ from fastapi import WebSocket
 from game import ChinitsuGame
 from redis_client import get_redis
 from room.models import (
-    Room, PlayerSession, RoomStatus, RoomEvent,
-    ROOM_MAX_LIFETIME_SEC, DEFAULT_ROUND_LIMIT,
+    Room, PlayerSession, SpectatorSession, RoomStatus, RoomEvent,
+    ROOM_MAX_LIFETIME_SEC, DEFAULT_ROUND_LIMIT, MAX_SPECTATORS_PER_ROOM,
 )
 from room import state_machine
 from room import protocol
 from room.errors import (
     WS_CLOSE_ROOM_FULL, WS_CLOSE_DUPLICATE_ID, WS_CLOSE_INVALID_ROOM,
     WS_CLOSE_ROOM_EXPIRED, WS_CLOSE_ROOM_CLOSED, WS_CLOSE_ALREADY_IN_ROOM,
+    WS_CLOSE_SPECTATOR_ROOM_FULL,
     ERR_GAME_NOT_STARTED, ERR_GAME_PAUSED, ERR_GAME_ENDED,
     ERR_NOT_ENOUGH_PLAYERS, ERR_UNKNOWN_ACTION, ERR_ROUND_NOT_ENDED,
+    ERR_SPECTATOR_ACTION_FORBIDDEN,
     InvalidTransitionError,
 )
 from room.push_service import PushService
@@ -58,10 +60,11 @@ class RoomManager:
         # ── 内存数据存储 ────────────────────────────────
         self.rooms: dict[str, Room] = {}
         self.sessions: dict[str, dict[str, PlayerSession]] = {}
+        self.spectators: dict[str, dict[str, SpectatorSession]] = {}
         self.games: dict[str, ChinitsuGame] = {}
 
         # ── 子服务 ─────────────────────────────────────
-        self.push = PushService(self.sessions)
+        self.push = PushService(self.sessions, self.spectators)
         self.snapshot_mgr = SnapshotManager()
         self.timers = TimeoutScheduler()
         self.ready_svc = ReadyService()
@@ -142,8 +145,7 @@ class RoomManager:
                 return True
 
         # ── 一人一房间限制 ─────────────────────────────────────────
-        # 必须在满员检查之前：先确认玩家没有在其他房间中
-        # （处于 RECONNECT/ENDED 中的离线玩家仍算"在房间中"）
+        # 检查玩家是否已在其他房间（含 RECONNECT/ENDED 中的离线玩家）
         active_room = self.get_user_active_room(user_id)
         if active_room is not None and active_room != room_name:
             if not ws_accepted:
@@ -154,16 +156,20 @@ class RoomManager:
                         user_id[:8], active_room, room_name)
             return False
 
+        # 检查是否已在另一个房间旁观
+        spectating_room = self.get_user_spectating_room(user_id)
+        if spectating_room is not None and spectating_room != room_name:
+            if not ws_accepted:
+                await ws.accept()
+            code, reason = WS_CLOSE_ALREADY_IN_ROOM
+            await ws.close(code=code, reason=reason)
+            logger.info("拒绝连接：旁观者 %s 已在房间 [%s]，不能加入 [%s]",
+                        user_id[:8], spectating_room, room_name)
+            return False
+
         # ── 场景 2：房间已存在，检查能否加入 ──────────
         if room is not None:
-            # 满员检查
-            if room.is_full:
-                if not ws_accepted:
-                    await ws.accept()
-                code, reason = WS_CLOSE_ROOM_FULL
-                await ws.close(code=code, reason=reason)
-                return False
-            # 重复 ID 检查（仅在线玩家才拒绝，已离线的允许重新加入）
+            # 重复 ID 检查须在满员检查之前——防止在线玩家绕过 DUPLICATE_ID 走旁观路径
             if user_id in room.player_ids:
                 session = self.get_session(room_name, user_id)
                 if session and session.online:
@@ -172,6 +178,14 @@ class RoomManager:
                     code, reason = WS_CLOSE_DUPLICATE_ID
                     await ws.close(code=code, reason=reason)
                     return False
+
+            # 满员 → 以旁观者身份加入
+            if room.is_full:
+                if not ws_accepted:
+                    await ws.accept()
+                    ws_accepted = True
+                await self._join_as_spectator(ws, room, user_id, display_name)
+                return True
 
         # ── 接受连接 ─────────────────────────────────
         if not ws_accepted:
@@ -190,18 +204,18 @@ class RoomManager:
         self, ws: WebSocket, room_name: str, user_id: str
     ) -> None:
         """
-        玩家 WebSocket 断开时调用。
-        根据当前房间状态执行不同的清理逻辑。
+        WebSocket 断开时调用。先判断是旁观者还是玩家，分路径处理。
         """
+        # 旁观者断线：静默移除，无状态机影响
+        if self._get_spectator(room_name, user_id) is not None:
+            await self._handle_spectator_disconnect(room_name, user_id)
+            return
+
+        # 玩家断线：委托给 ReconnectManager
         session = self.get_session(room_name, user_id)
         if session is None:
             return
-
-        # 获取 connection_id 用于旧连接保护
-        connection_id = session.connection_id
-
-        # 委托给 ReconnectManager 统一处理
-        await self.reconnect_mgr.on_disconnect(room_name, user_id, connection_id)
+        await self.reconnect_mgr.on_disconnect(room_name, user_id, session.connection_id)
 
     async def handle_action(
         self, data: dict, room_name: str, user_id: str
@@ -212,6 +226,14 @@ class RoomManager:
         """
         room = self.rooms.get(room_name)
         if room is None:
+            return
+
+        # 旁观者不允许发送任何 action
+        if self._get_spectator(room_name, user_id) is not None:
+            await self.push.unicast_spectator(
+                room_name, user_id,
+                protocol.make_error(ERR_SPECTATOR_ACTION_FORBIDDEN),
+            )
             return
 
         action = data.get("action", "")
@@ -360,6 +382,72 @@ class RoomManager:
 
         logger.info("玩家加入 [%s] %s(%s) 当前%d人",
                      room_name, display_name, user_id[:8], len(room.player_ids))
+
+    # ================================================================
+    # 内部方法：旁观者加入 / 离开
+    # ================================================================
+
+    async def _join_as_spectator(
+        self, ws: WebSocket, room: Room, user_id: str, display_name: str
+    ) -> None:
+        """将连接者以旁观者身份加入房间。"""
+        room_name = room.room_name
+
+        if room_name not in self.spectators:
+            self.spectators[room_name] = {}
+
+        if len(self.spectators[room_name]) >= MAX_SPECTATORS_PER_ROOM:
+            code, reason = WS_CLOSE_SPECTATOR_ROOM_FULL
+            await ws.close(code=code, reason=reason)
+            logger.info("旁观者席位已满 [%s]，拒绝 %s", room_name, user_id[:8])
+            return
+
+        spec = SpectatorSession(
+            user_id=user_id,
+            display_name=display_name,
+            room_name=room_name,
+            ws=ws,
+        )
+        self.spectators[room_name][user_id] = spec
+        spectator_count = len(self.spectators[room_name])
+
+        # 广播旁观者加入通知（玩家 + 其他旁观者都能看到）
+        await self.push.broadcast(
+            room_name,
+            protocol.make_spectator_joined(display_name, spectator_count),
+        )
+
+        # 向新旁观者推送当前游戏状态快照
+        snapshot = await self.snapshot_mgr.load_snapshot(room_name)
+        if snapshot:
+            view = self.snapshot_mgr.build_spectator_view(snapshot)
+            await self.push.unicast_spectator(room_name, user_id, view)
+        else:
+            # 游戏尚未开始（WAITING 状态）
+            await self.push.unicast_spectator(room_name, user_id, {
+                "broadcast": False,
+                "event": "spectator_snapshot",
+                "game_status": room.status.value,
+                "players": {},
+                "wall_count": 0,
+            })
+
+        logger.info("旁观者加入 [%s] %s(%s) 共%d名旁观者",
+                    room_name, display_name, user_id[:8], spectator_count)
+
+    async def _handle_spectator_disconnect(self, room_name: str, user_id: str) -> None:
+        """旁观者断线：静默移除，广播离开通知。"""
+        spec = self.spectators.get(room_name, {}).pop(user_id, None)
+        if spec is None:
+            return
+
+        spectator_count = len(self.spectators.get(room_name, {}))
+        await self.push.broadcast(
+            room_name,
+            protocol.make_spectator_left(spec.display_name, spectator_count),
+        )
+        logger.info("旁观者离开 [%s] %s(%s) 剩余%d名旁观者",
+                    room_name, spec.display_name, user_id[:8], spectator_count)
 
     # ================================================================
     # 内部方法：房间层 action 处理
@@ -572,12 +660,13 @@ class RoomManager:
             room.round_no += 1
             logger.info("第 %d 轮结束 [%s]", room.round_no, room_name)
 
-        # 保存快照
+        # 保存快照，并推送旁观者更新
         snapshot = self.snapshot_mgr.serialize_game(
             game, room_name, room.round_no, room.round_limit,
             display_names=self.get_display_names(room_name),
         )
         await self.snapshot_mgr.save_snapshot(room_name, snapshot)
+        await self._push_spectator_update(room_name, snapshot)
 
         # 评估比赛是否应该结束
         if round_just_ended:
@@ -642,12 +731,13 @@ class RoomManager:
         # 构建初始游戏状态并发送给双方
         await self._send_game_start_state(room, game)
 
-        # 保存初始快照
+        # 保存初始快照，并推送旁观者更新
         snapshot = self.snapshot_mgr.serialize_game(
             game, room_name, room.round_no, room.round_limit,
             display_names=self.get_display_names(room_name),
         )
         await self.snapshot_mgr.save_snapshot(room_name, snapshot)
+        await self._push_spectator_update(room_name, snapshot)
 
         logger.info("游戏开始 [%s] 玩家=%s", room_name, room.player_ids)
 
@@ -666,12 +756,13 @@ class RoomManager:
         # 构建并发送游戏状态
         await self._send_game_start_state(room, game)
 
-        # 保存快照
+        # 保存快照，并推送旁观者更新
         snapshot = self.snapshot_mgr.serialize_game(
             game, room_name, room.round_no, room.round_limit,
             display_names=self.get_display_names(room_name),
         )
         await self.snapshot_mgr.save_snapshot(room_name, snapshot)
+        await self._push_spectator_update(room_name, snapshot)
 
         logger.info("第 %d 轮开始 [%s]", room.round_no + 1, room_name)
 
@@ -753,9 +844,10 @@ class RoomManager:
         # 清理 Redis
         await self._cleanup_redis(room_name)
 
-        # 清理内存
+        # 清理内存（含旁观者）
         self.rooms.pop(room_name, None)
         self.sessions.pop(room_name, None)
+        self.spectators.pop(room_name, None)
         self.games.pop(room_name, None)
 
     # ================================================================
@@ -775,6 +867,25 @@ class RoomManager:
             if user_id in room_sessions:
                 return room_name
         return None
+
+    def get_user_spectating_room(self, user_id: str) -> str | None:
+        """返回用户当前旁观的房间名，若不在任何旁观则返回 None。"""
+        for room_name, room_spectators in self.spectators.items():
+            if user_id in room_spectators:
+                return room_name
+        return None
+
+    def _get_spectator(self, room_name: str, user_id: str) -> SpectatorSession | None:
+        """获取指定旁观者会话，不存在则返回 None。"""
+        return self.spectators.get(room_name, {}).get(user_id)
+
+    async def _push_spectator_update(self, room_name: str, snapshot: dict) -> None:
+        """将最新快照以全知视角广播给所有旁观者（游戏动作后调用）。"""
+        if not self.spectators.get(room_name):
+            return
+        view = self.snapshot_mgr.build_spectator_view(snapshot)
+        view["event"] = "spectator_game_update"   # 区别于初次加入时的 spectator_snapshot
+        await self.push.broadcast_spectators(room_name, view)
 
     def get_display_names(self, room_name: str) -> dict[str, str]:
         """从 session 中获取房间内所有玩家的昵称映射 {user_id: display_name}"""

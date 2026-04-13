@@ -67,6 +67,7 @@ channels:
       | 1001 | `room_expired` | Room 40-minute lifetime elapsed |
       | 1001 | `room_closed` | Room destroyed (end_game / both offline) |
       | 1003 | `room_full` | Room already has 2 active players |
+      | 1003 | `spectator_room_full` | Spectator slot limit (10) reached |
       | 1003 | `duplicate_id` | Player is already online in this room |
       | 1003 | `invalid_room_name` | Room name empty or longer than 20 characters |
       | 1003 | `already_in_room` | Player has an active session in another room |
@@ -104,6 +105,9 @@ channels:
           - $ref: '#/components/messages/EvtReconnectTimeout'
           - $ref: '#/components/messages/EvtRoomExpired'
           - $ref: '#/components/messages/EvtRoomClosed'
+          # — Spectator (broadcast to all) —
+          - $ref: '#/components/messages/EvtSpectatorJoined'
+          - $ref: '#/components/messages/EvtSpectatorLeft'
           # — Connection (unicast) —
           - $ref: '#/components/messages/EvtRoomCreated'
           - $ref: '#/components/messages/EvtOpponentDisconnected'
@@ -113,6 +117,9 @@ channels:
           - $ref: '#/components/messages/EvtGameStarted'
           - $ref: '#/components/messages/EvtGameSnapshot'
           - $ref: '#/components/messages/GameActionResponse'
+          # — Spectator view (unicast to spectator) —
+          - $ref: '#/components/messages/EvtSpectatorSnapshot'
+          - $ref: '#/components/messages/EvtSpectatorGameUpdate'
 
   # ── HTTP: Register ──────────────────────────────────────────────────────────
   /api/register:
@@ -311,6 +318,45 @@ components:
       summary: Room is being destroyed for a non-expiry reason (e.g. a player called end_game).
       payload:
         $ref: '#/components/schemas/RoomClosedPayload'
+
+    # ── Server → Client: spectator broadcast events ───────────────────────────
+
+    EvtSpectatorJoined:
+      name: EvtSpectatorJoined
+      title: Spectator Joined
+      summary: |
+        A spectator joined the room. Sent to all players and spectators.
+      payload:
+        $ref: '#/components/schemas/SpectatorJoinedPayload'
+
+    EvtSpectatorLeft:
+      name: EvtSpectatorLeft
+      title: Spectator Left
+      summary: |
+        A spectator disconnected from the room. Sent to all players and spectators.
+      payload:
+        $ref: '#/components/schemas/SpectatorLeftPayload'
+
+    # ── Server → Client: spectator unicast events ─────────────────────────────
+
+    EvtSpectatorSnapshot:
+      name: EvtSpectatorSnapshot
+      title: Spectator Snapshot
+      summary: |
+        Full omniscient game state sent to a spectator when they join.
+        Both players' hands are fully revealed. Sent only when the game is RUNNING.
+        If the game is not yet started, a plain waiting message is sent instead.
+      payload:
+        $ref: '#/components/schemas/SpectatorSnapshotPayload'
+
+    EvtSpectatorGameUpdate:
+      name: EvtSpectatorGameUpdate
+      title: Spectator Game Update
+      summary: |
+        Omniscient game state pushed to all spectators after each game action.
+        Same schema as `spectator_snapshot` but with event name `spectator_game_update`.
+      payload:
+        $ref: '#/components/schemas/SpectatorSnapshotPayload'
 
     # ── Server → Client: unicast events (broadcast=false) ─────────────────────
 
@@ -965,6 +1011,138 @@ components:
         'uuid-alice': [['5s', false], ['3s', true]]
         'uuid-bob': [['7s', false]]
 
+    # ── Spectator schemas ──────────────────────────────────────────────────────
+
+    SpectatorJoinedPayload:
+      type: object
+      required: [broadcast, event, display_name, spectator_count]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [spectator_joined]
+        display_name:
+          type: string
+          description: Display name of the spectator who joined.
+          example: 'Charlie'
+        spectator_count:
+          type: integer
+          description: Total spectators now watching the room.
+          example: 1
+
+    SpectatorLeftPayload:
+      type: object
+      required: [broadcast, event, display_name, spectator_count]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [spectator_left]
+        display_name:
+          type: string
+          description: Display name of the spectator who left.
+        spectator_count:
+          type: integer
+          description: Spectators remaining after the departure.
+          example: 0
+
+    SpectatorSnapshotPayload:
+      type: object
+      required:
+        - broadcast
+        - event
+        - game_status
+        - turn_stage
+        - current_player
+        - wall_count
+        - round_no
+        - round_limit
+        - kyoutaku_number
+        - spectator_count
+        - players
+      description: |
+        Omniscient view of the game state sent to spectators.
+        All players' hands are fully visible.
+        `current_player` follows the same after_discard convention as the player snapshot.
+        Used for both `spectator_snapshot` (join) and `spectator_game_update` (after action).
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
+        event:
+          type: string
+          enum: [spectator_snapshot, spectator_game_update]
+        game_status:
+          type: string
+          enum: [waiting, running, reconnect, ended]
+        turn_stage:
+          type: string
+          nullable: true
+          enum: [before_draw, after_draw, after_discard]
+        current_player:
+          type: string
+          nullable: true
+          description: UUID of the player whose turn it is.
+        wall_count:
+          type: integer
+        round_no:
+          type: integer
+          description: 0-based completed round count.
+        round_limit:
+          type: integer
+        kyoutaku_number:
+          type: integer
+          description: Riichi sticks on the table.
+        spectator_count:
+          type: integer
+          description: Number of spectators currently watching.
+        players:
+          type: object
+          description: Full data for every player, keyed by UUID.
+          additionalProperties:
+            $ref: '#/components/schemas/SpectatorPlayerView'
+
+    SpectatorPlayerView:
+      type: object
+      description: Full (omniscient) data for a single player as seen by a spectator.
+      required: [display_name, hand, fuuro, kawa, point, is_oya, is_riichi, num_kan]
+      properties:
+        display_name:
+          type: string
+        hand:
+          type: array
+          items:
+            type: string
+          description: Full revealed hand tiles.
+        fuuro:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+          description: Declared melds (kan sets).
+        kawa:
+          type: array
+          items:
+            type: array
+            prefixItems:
+              - type: string
+              - type: boolean
+          description: Discard pile; each entry is `[tile_id, is_riichi_discard]`.
+        point:
+          type: integer
+        is_oya:
+          type: boolean
+        is_riichi:
+          type: boolean
+        num_kan:
+          type: integer
+          description: Number of kans declared by this player.
+
     # ── Error codes ────────────────────────────────────────────────────────────
 
     ErrorCode:
@@ -973,14 +1151,15 @@ components:
         Returned in the `code` field of an `error` event when an action is rejected.
 
         **Room-layer errors:**
-        | Code               | Cause |
-        |--------------------|-------|
-        | game_not_started   | Game action sent while in WAITING state |
-        | game_paused        | Game action sent while in RECONNECT state |
-        | game_ended         | Invalid action sent while in ENDED state |
-        | round_not_ended    | `start_new` sent before the current round finished |
-        | not_enough_players | `start` sent with fewer than 2 online players |
-        | unknown_action     | Unrecognised action string |
+        | Code                        | Cause |
+        |-----------------------------|-------|
+        | game_not_started            | Game action sent while in WAITING state |
+        | game_paused                 | Game action sent while in RECONNECT state |
+        | game_ended                  | Invalid action sent while in ENDED state |
+        | round_not_ended             | `start_new` sent before the current round finished |
+        | not_enough_players          | `start` sent with fewer than 2 online players |
+        | unknown_action              | Unrecognised action string |
+        | spectator_action_forbidden  | Any action sent by a spectator (spectators are read-only) |
 
         **Game-layer errors** (turn / phase enforcement):
         | Code              | Cause |
@@ -1010,3 +1189,4 @@ components:
         - illegal_riichi
         - illegal_tsumo
         - illegal_ron
+        - spectator_action_forbidden

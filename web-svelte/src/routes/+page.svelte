@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { gameState, connect } from '$lib/ws';
+	import { gameState, connect, isSpectator } from '$lib/ws';
 	import { isLoggedIn, getToken } from '$lib/auth';
 	import Login from '$lib/components/Login.svelte';
 	import Lobby from '$lib/components/Lobby.svelte';
 	import Game from '$lib/components/Game.svelte';
+	import SpectatorGame from '$lib/components/SpectatorGame.svelte';
 
 	let phase = $derived($gameState.phase);
 	let authed = $state(isLoggedIn());
@@ -47,6 +48,8 @@
 	</div>
 {:else if phase === 'lobby'}
 	<Lobby onLogout={() => (authed = false)} />
+{:else if $isSpectator}
+	<SpectatorGame />
 {:else}
 	<Game />
 {/if}

@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import type { GameState, AgariData, KawaEntry } from './types';
+import type { GameState, AgariData, KawaEntry, SpectatorState, SpectatorPlayerData } from './types';
 import { getToken, getUuid, getUsername } from './auth';
 
 // --- Stores ---
@@ -26,9 +26,51 @@ export const gameState = writable<GameState>({
 export const logs = writable<{ text: string; type: string }[]>([]);
 export const agariResult = writable<(AgariData & { isMe: boolean }) | null>(null);
 
+// --- Spectator state ---
+export const isSpectator = writable(false);
+export const spectatorState = writable<SpectatorState>({
+	phase: 'lobby',
+	gameStatus: '',
+	turnStage: null,
+	currentPlayer: null,
+	wallCount: 0,
+	roundNo: 0,
+	roundLimit: 8,
+	kyoutaku: 0,
+	spectatorCount: 0,
+	players: {}
+});
+
 // --- Connection state ---
 let ws: WebSocket | null = null;
 export let myId = '';
+
+// --- Duplicate-tab retry state ---
+let lastRoomName: string | null = null;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let isRetrying = false;
+const RETRY_INTERVAL_MS = 5000;
+
+function scheduleRetry() {
+	if (retryTimer !== null) clearTimeout(retryTimer);
+	if (!lastRoomName) return;
+	if (!isRetrying) {
+		isRetrying = true;
+		logMsg('You are already connected in another tab. Will retry automatically when that tab closes…', 'warn');
+	}
+	retryTimer = setTimeout(() => {
+		retryTimer = null;
+		if (lastRoomName) connect(lastRoomName);
+	}, RETRY_INTERVAL_MS);
+}
+
+function clearRetry() {
+	if (retryTimer !== null) {
+		clearTimeout(retryTimer);
+		retryTimer = null;
+	}
+	isRetrying = false;
+}
 export let oppId = '';
 export let myDisplayName = '';
 export let oppDisplayName = '';
@@ -65,6 +107,8 @@ export function sendAction(action: string, cardIdx?: number | null) {
 export function connect(
 	roomName: string
 ): Promise<{ ok: boolean; reason?: string }> {
+	clearRetry();
+	lastRoomName = roomName;
 	myId = getUuid();
 	myDisplayName = getUsername();
 	const token = getToken();
@@ -95,6 +139,10 @@ export function connect(
 		ws.onopen = () => {
 			clearTimeout(timeout);
 			console.log('[ws] connected');
+			isRetrying = false;
+			// Reset spectator state on every new connection
+			isSpectator.set(false);
+			spectatorState.update((s) => ({ ...s, phase: 'lobby', players: {} }));
 			gameState.update((s) => ({ ...s, phase: 'waiting' }));
 			logMsg('Connected to room: ' + roomName, 'broadcast');
 			done({ ok: true });
@@ -109,11 +157,16 @@ export function connect(
 			if (event.code === 1008) {
 				done({ ok: false, reason: 'Authentication failed. Please login again.' });
 			} else if (event.code === 1003) {
+				if (event.reason === 'duplicate_id') {
+					done({ ok: false, reason: 'Already connected in another tab.' });
+					scheduleRetry();
+					return;
+				}
 				const reason =
 					event.reason === 'room_full'
 						? 'Room is full!'
-						: event.reason === 'duplicate_id'
-							? 'Name already taken in this room.'
+						: event.reason === 'spectator_room_full'
+							? 'Spectator seats are full (max 10).'
 							: event.reason === 'already_in_room'
 								? 'You are already in another room.'
 								: 'Connection refused.';
@@ -198,6 +251,21 @@ function handleBroadcastEvent(data: Record<string, unknown>) {
 	if (event === 'room_expired' || event === 'room_closed') {
 		logMsg('Room closed.', 'broadcast');
 		gameState.update((s) => ({ ...s, phase: 'lobby' }));
+		isSpectator.set(false);
+		return;
+	}
+
+	if (event === 'spectator_joined') {
+		const count = data.spectator_count as number;
+		spectatorState.update((s) => ({ ...s, spectatorCount: count }));
+		logMsg(`${data.display_name as string} is now watching (${count} watching)`, 'broadcast');
+		return;
+	}
+
+	if (event === 'spectator_left') {
+		const count = data.spectator_count as number;
+		spectatorState.update((s) => ({ ...s, spectatorCount: count }));
+		logMsg(`${data.display_name as string} stopped watching (${count} watching)`, 'broadcast');
 		return;
 	}
 
@@ -218,7 +286,46 @@ function handleBroadcastEvent(data: Record<string, unknown>) {
 	}
 }
 
+function parseSpectatorSnapshot(data: Record<string, unknown>): SpectatorState {
+	const raw = (data.players ?? {}) as Record<string, Record<string, unknown>>;
+	const players: Record<string, SpectatorPlayerData> = {};
+	for (const [pid, pd] of Object.entries(raw)) {
+		players[pid] = {
+			display_name: pd.display_name as string,
+			hand: (pd.hand as string[]) ?? [],
+			fuuro: (pd.fuuro as string[][]) ?? [],
+			kawa: ((pd.kawa as [string, boolean][]) ?? []).map(([card, isRiichi]) => ({ card, isRiichi })),
+			point: (pd.point as number) ?? 0,
+			is_oya: (pd.is_oya as boolean) ?? false,
+			is_riichi: (pd.is_riichi as boolean) ?? false,
+			num_kan: (pd.num_kan as number) ?? 0
+		};
+	}
+	const gameStatus = (data.game_status as string) ?? '';
+	const phase: SpectatorState['phase'] = gameStatus === 'ended' ? 'watching_ended' : 'watching';
+	return {
+		phase,
+		gameStatus,
+		turnStage: (data.turn_stage as SpectatorState['turnStage']) ?? null,
+		currentPlayer: (data.current_player as string) || null,
+		wallCount: (data.wall_count as number) ?? 0,
+		roundNo: (data.round_no as number) ?? 0,
+		roundLimit: (data.round_limit as number) ?? 8,
+		kyoutaku: (data.kyoutaku_number as number) ?? 0,
+		spectatorCount: 0, // maintained separately by spectator_joined/left events
+		players
+	};
+}
+
 function handleMessage(data: Record<string, unknown>) {
+	// 0. Spectator snapshots — this client is a spectator
+	if (data.event === 'spectator_snapshot' || data.event === 'spectator_game_update') {
+		isSpectator.set(true);
+		spectatorState.set(parseSpectatorSnapshot(data));
+		// Also sync spectatorCount from the current store value (preserved across updates)
+		return;
+	}
+
 	// 1. Reconnect snapshot — restore full game state
 	if (data.event === 'game_snapshot') {
 		const me = data.me as Record<string, unknown>;

@@ -181,13 +181,25 @@ class TestMatchEndEvaluator:
         assert d.should_end is False
 
     def test_point_zero_alice(self):
+        """点数刚好为 0 时不触发结束（规则改为 < 0 才结束）"""
         snap = self._make_snap(alice_pt=0)
+        d = evaluate(snap)
+        assert d.should_end is False
+
+    def test_point_zero_bob(self):
+        """点数刚好为 0 时不触发结束（规则改为 < 0 才结束）"""
+        snap = self._make_snap(bob_pt=0)
+        d = evaluate(snap)
+        assert d.should_end is False
+
+    def test_point_below_zero_alice(self):
+        snap = self._make_snap(alice_pt=-1)
         d = evaluate(snap)
         assert d.should_end is True
         assert d.reason == "point_zero"
 
-    def test_point_zero_bob(self):
-        snap = self._make_snap(bob_pt=0)
+    def test_point_below_zero_bob(self):
+        snap = self._make_snap(bob_pt=-1)
         d = evaluate(snap)
         assert d.should_end is True
         assert d.reason == "point_zero"

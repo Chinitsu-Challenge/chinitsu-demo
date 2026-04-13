@@ -131,3 +131,25 @@ def make_auto_action(action: str) -> dict:
         "event": "auto_action",
         "action": action,
     }
+
+
+# ── 旁观者类事件 ────────────────────────────────────────────────
+
+def make_spectator_joined(display_name: str, spectator_count: int) -> dict:
+    """旁观者加入通知（广播给房间内所有人）"""
+    return {
+        "broadcast": True,
+        "event": "spectator_joined",
+        "display_name": display_name,
+        "spectator_count": spectator_count,
+    }
+
+
+def make_spectator_left(display_name: str, spectator_count: int) -> dict:
+    """旁观者离开通知（广播给房间内所有人）"""
+    return {
+        "broadcast": True,
+        "event": "spectator_left",
+        "display_name": display_name,
+        "spectator_count": spectator_count,
+    }
