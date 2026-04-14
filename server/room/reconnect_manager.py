@@ -218,6 +218,10 @@ class ReconnectManager:
                 room_name, opponent_id, protocol.make_opponent_reconnected()
             )
 
+        # bot 房间：重连后恢复 bot 行动链（若当前轮到 bot）
+        if room.vs_bot:
+            self._rm.bot_svc.schedule(room_name)
+
         logger.info("重连成功 [%s/%s]", room_name, user_id)
         return True
 

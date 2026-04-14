@@ -561,7 +561,7 @@ function handleMessage(data: Record<string, unknown>) {
 				fu: data.fu as number | undefined,
 				point: data.point as number,
 				yaku: data.yaku as string[] | undefined,
-				hand: data.hand as string[] | undefined,
+				hand: (data.winner_hand as string[] | undefined) ?? (data.hand as string[] | undefined),
 				isMe
 			});
 		}

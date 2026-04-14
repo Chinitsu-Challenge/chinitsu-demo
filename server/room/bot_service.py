@@ -8,6 +8,16 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+# 各操作前的模拟思考延迟（秒）
+_ACTION_DELAY: dict[str, float] = {
+    "draw":     0.4,
+    "skip_ron": 0.5,
+    "tsumo":    0.7,
+    "ron":      0.7,
+    "discard":  1.0,
+    "riichi":   1.5,
+}
+
 from bot_player import choose_bot_action, BOT_ID
 
 if TYPE_CHECKING:
@@ -71,6 +81,9 @@ class BotService:
                 if choice is None:
                     break  # 轮到人类行动
 
+                # 模拟思考延迟，让人类看清牌面
+                await asyncio.sleep(_ACTION_DELAY.get(choice["action"], 0.5))
+
                 # 执行 bot 操作
                 try:
                     result = game.input(choice["action"], choice["card_idx"], BOT_ID)
@@ -105,9 +118,6 @@ class BotService:
 
                 if game.is_ended:
                     break
-
-                # 让出事件循环，避免长时间占用
-                await asyncio.sleep(0)
 
         except asyncio.CancelledError:
             raise
