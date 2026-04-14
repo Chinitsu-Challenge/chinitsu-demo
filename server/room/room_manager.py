@@ -740,10 +740,7 @@ class RoomManager:
             room.round_no += 1
             logger.info("第 %d 轮结束 [%s]", room.round_no, room_name)
 
-<<<<<<< HEAD
         # 保存快照，并推送旁观者更新
-=======
->>>>>>> 8ab618b ((1)introduce bot-player with 3 different levels: Easy, Normal, Hard. Also realized under leader mdc's command, the bot is a seperate module and there is no modifiaction for game.py. (2) fix(?)bot room online, when human player disconnect or reload the page, the opponent would appear as ??? and couldn't connect to the previous game, now this problem got solved by modifying min_onlie = 1 if room.vs_bot else 2. (3) ANd the previous reload bug seems to be my fault that after I run uv sync then the game can start normally. Details can be found in CLAUDE.md located under the project root, not the one under server dir.)
         snapshot = self.snapshot_mgr.serialize_game(
             game, room_name, room.round_no, room.round_limit,
             display_names=self.get_display_names(room_name),
