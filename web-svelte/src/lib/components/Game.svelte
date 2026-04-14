@@ -12,7 +12,6 @@
 	import ConnectionErrorOverlay from './ConnectionErrorOverlay.svelte';
 	import ErrorToast from './ErrorToast.svelte';
 	import EmotePopup from './EmotePopup.svelte';
-	import EmotePicker from './EmotePicker.svelte';
 	import { onMount } from 'svelte';
 
 	let s = $derived($gameState);
@@ -124,7 +123,6 @@
 
 	<!-- Action bar pinned to bottom -->
 	<div class="action-bar">
-		<EmotePicker />
 		{#if s.phase === 'waiting'}
 			<button class="btn btn-action" onclick={() => sendAction('start')}>Start Game</button>
 		{:else if s.phase === 'ended'}

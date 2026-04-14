@@ -471,9 +471,9 @@ function handleBroadcastEvent(data: Record<string, unknown>) {
 		const dn = data.display_name as string;
 		const emoteId = data.emote_id as string;
 		const isMe = dn === myDisplayName;
-		const glyph = EMOTES[emoteId] ?? emoteId;
-		showEmotePopup(glyph, isMe);
-		logMsg(`${isMe ? 'You' : dn}: ${glyph}`, 'emote');
+		showEmotePopup(emoteId, isMe);
+		const label = EMOTES[emoteId]?.label ?? emoteId;
+		logMsg(`${isMe ? 'You' : dn}: [${label}]`, 'emote');
 		return;
 	}
 

@@ -433,39 +433,8 @@ html, body {
   flex: 1;
 }
 
-/* === Message Log === */
-#message-log {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  width: 280px;
-  z-index: 100;
-}
-
-.log-toggle {
-  padding: 4px 12px;
-  background: rgba(0,0,0,0.6);
-  cursor: pointer;
-  font-size: 0.8em;
-  text-align: center;
-  border-radius: 6px 6px 0 0;
-}
-
-.log-content {
-  background: rgba(0,0,0,0.7);
-  max-height: 200px;
-  overflow-y: auto;
-  padding: 8px;
-  font-size: 0.75em;
-  line-height: 1.5;
-  display: none;
-}
-
-.log-content.open { display: block; }
-
-.log-entry { padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
-.log-entry.error { color: var(--danger); }
-.log-entry.broadcast { color: var(--accent); }
+/* === Message Log (now social panel) === */
+/* Old selectors kept for backward compatibility - styles moved to component */
 
 /* === Agari Overlay === */
 .overlay {
