@@ -34,8 +34,8 @@
 		display: block;
 		width: 120px;
 		height: 120px;
-		border-radius: 1rem;
-		box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+		border-radius: 0;
+		box-shadow: none;
 	}
 
 	/* Emote shoots out from player position */
