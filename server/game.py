@@ -313,14 +313,21 @@ class ChinitsuGame:
         self.draw_from_yama(ko, 1)
         self.set_running()
         if self.rules.get('sort_hand'):
-            for name in self.player_ids:
-                self._players[name].hand.sort()
+            # Oya has 14 tiles: sort first 13, keep tile 14 at end as tsumo tile.
+            # Ko has 13 tiles: full sort is safe (ko draws before tsumo).
+            oya_hand = self._players[oya].hand
+            oya_hand[:-1] = sorted(oya_hand[:-1])
+            self._players[ko].hand.sort()
 
 
 
     def _sort_hand_if_enabled(self, player_name: str):
         if self.rules.get('sort_hand'):
-            self._players[player_name].hand.sort()
+            hand = self._players[player_name].hand
+            if len(hand) > 1:
+                # Sort all tiles except the last (newly drawn) tile so that
+                # hand[-1] always points to the tsumo tile for win evaluation.
+                hand[:-1] = sorted(hand[:-1])
 
     def add_player(self, player_name: str):
         if len(self._players) >= 2:
