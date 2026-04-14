@@ -11,9 +11,9 @@ class GameManager:
     def __init__(self) -> None:
         self.games = dict()
 
-    def init_game(self, room_name):
+    def init_game(self, room_name, rules=None, debug_code=None):
         if room_name not in self.games:
-            self.games[room_name] = ChinitsuGame()
+            self.games[room_name] = ChinitsuGame(rules=rules, debug_code=debug_code)
             return True
         return False  # Game already started
 
@@ -32,7 +32,7 @@ class ConnectionManager:
         self.connection_display_name: Dict[WebSocket, str] = {}
         self.game_manager = game_manager
 
-    async def connect(self, websocket: WebSocket, room_name: str, player_id: str, display_name: str = ""):
+    async def connect(self, websocket: WebSocket, room_name: str, player_id: str, display_name: str = "", rules=None, debug_code=None):
         if room_name in self.active_connections:
             if len(self.active_connections[room_name]) >= 2:
                 err_msg = "room_full"
@@ -54,9 +54,9 @@ class ConnectionManager:
         self.connection_owner[websocket] = player_id
         self.connection_display_name[websocket] = display_name
 
-        # Initialize game for the first player (host)
+        # Initialize game for the first player (host); rules and debug_code only applied by host
         if len(self.active_connections[room_name]) == 1:
-            self.game_manager.init_game(room_name)
+            self.game_manager.init_game(room_name, rules=rules, debug_code=debug_code)
             self.game_manager.get_game(room_name).add_player(player_id)
             await self.broadcast(f"Game started in room {room_name}! Host is {display_name}", room_name)
         # second player (new or rejoin)

@@ -70,7 +70,15 @@ app.mount("/assets", StaticFiles(directory=_SERVER_DIR / "assets"), name="assets
 
 
 @app.websocket("/ws/{room_name}")
-async def websocket_endpoint(websocket: WebSocket, room_name: str, token: str = Query("")):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    room_name: str,
+    token: str = Query(""),
+    initial_point: int = Query(default=None),
+    no_agari_punishment: int = Query(default=None),
+    debug_code: int = Query(default=None),
+    sort_hand: bool = Query(default=None),
+):
     # Validate JWT token
     payload = verify_token(token)
     if payload is None:
@@ -81,7 +89,16 @@ async def websocket_endpoint(websocket: WebSocket, room_name: str, token: str = 
     player_id = payload["uuid"]
     display_name = payload["username"]
 
-    if not await manager.connect(websocket, room_name, player_id, display_name):
+    rules = {}
+    if initial_point is not None:
+        rules["initial_point"] = initial_point
+    if no_agari_punishment is not None:
+        rules["no_agari_punishment"] = no_agari_punishment
+    if sort_hand is not None:
+        rules["sort_hand"] = sort_hand
+
+    if not await manager.connect(websocket, room_name, player_id, display_name,
+                                  rules=rules or None, debug_code=debug_code):
         return
 
     try:

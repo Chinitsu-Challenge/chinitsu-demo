@@ -62,8 +62,16 @@ export function sendAction(action: string, cardIdx?: number | null) {
 }
 
 // --- Connection ---
+export interface RoomSettings {
+	initialPoint?: number;
+	noAgariPunishment?: number;
+	debugCode?: number;
+	sortHand?: boolean;
+}
+
 export function connect(
-	roomName: string
+	roomName: string,
+	settings?: RoomSettings
 ): Promise<{ ok: boolean; reason?: string }> {
 	myId = getUuid();
 	myDisplayName = getUsername();
@@ -82,7 +90,12 @@ export function connect(
 		// In dev, set VITE_WS_URL to point at the backend (e.g. ws://localhost:8000).
 		const base = import.meta.env.VITE_WS_URL
 			|| `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
-		const url = `${base}/ws/${roomName}?token=${encodeURIComponent(token)}`;
+		const params = new URLSearchParams({ token });
+		if (settings?.initialPoint != null)        params.set('initial_point', String(settings.initialPoint));
+		if (settings?.noAgariPunishment != null)   params.set('no_agari_punishment', String(settings.noAgariPunishment));
+		if (settings?.debugCode != null)           params.set('debug_code', String(settings.debugCode));
+		if (settings?.sortHand != null)            params.set('sort_hand', String(settings.sortHand));
+		const url = `${base}/ws/${roomName}?${params}`;
 		console.log('[ws] connecting to', url);
 		ws = new WebSocket(url);
 

@@ -5,4 +5,10 @@ web-svelte/build/
 web-svelte/.svelte-kit/
 
 *.lock
+
 *.db
+.vscode/
+server/room/tests/test_run.log
+server/room/development_docs/
+*.ps1
+
