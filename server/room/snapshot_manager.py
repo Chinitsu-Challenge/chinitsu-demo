@@ -50,6 +50,13 @@ class SnapshotManager:
                 "is_oya": player.is_oya,
                 "is_riichi": player.is_riichi,
                 "num_kan": player.num_kan,
+                # 以下字段用于服务重启后从快照完整重建 ChinitsuGame 对象
+                "is_daburu_riichi": getattr(player, 'is_daburu_riichi', False),
+                "riichi_turn":      getattr(player, 'riichi_turn', None),
+                "is_ippatsu":       getattr(player, 'is_ippatsu', False),
+                "is_rinshan":       getattr(player, 'is_rinshan', False),
+                "is_furiten":       getattr(player, 'is_furiten', False),
+                "is_temp_furiten":  getattr(player, 'is_temp_furiten', False),
             }
 
         # 获取回合状态（game.state 在 start_game 后才存在）
@@ -78,6 +85,9 @@ class SnapshotManager:
             "kyoutaku_number": game.kyoutaku_number,
             "tsumi_number": game.tsumi_number,
             "players": players_data,
+            # 以下字段专用于服务重启后的游戏状态完整重建
+            "yama": list(game.yama),
+            "next_oya": getattr(game, 'next_oya', None),
         }
 
     # ── 视角裁剪：生成发给特定玩家的安全快照 ─────────────────────

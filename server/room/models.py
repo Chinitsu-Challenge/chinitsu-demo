@@ -87,6 +87,21 @@ class PlayerSession:
             "connection_id": self.connection_id,
         }
 
+    @classmethod
+    def from_redis_dict(cls, data: dict) -> "PlayerSession":
+        """从 Redis Hash 反序列化（ws 字段不在 Redis 中，默认为 None）"""
+        last_seen_raw = data.get("last_seen", "0")
+        return cls(
+            user_id=data["user_id"],
+            display_name=data.get("display_name", ""),
+            room_name=data["room_name"],
+            seat=int(data.get("seat", 0)),
+            is_owner=data.get("is_owner", "false") == "true",
+            online=data.get("online", "false") == "true",
+            last_seen=float(last_seen_raw) if last_seen_raw and last_seen_raw not in ("0", "None") else None,
+            connection_id=data.get("connection_id", str(uuid.uuid4())),
+        )
+
 
 # ── 旁观者会话 ──────────────────────────────────────────────────
 @dataclass

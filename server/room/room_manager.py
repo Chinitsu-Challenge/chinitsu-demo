@@ -16,7 +16,7 @@ from game import ChinitsuGame
 from redis_client import get_redis
 from room.models import (
     Room, PlayerSession, SpectatorSession, RoomStatus, RoomEvent,
-    ROOM_MAX_LIFETIME_SEC, DEFAULT_ROUND_LIMIT, MAX_SPECTATORS_PER_ROOM,
+    ROOM_MAX_LIFETIME_SEC, RECONNECT_TIMEOUT_SEC, DEFAULT_ROUND_LIMIT, MAX_SPECTATORS_PER_ROOM,
 )
 from room import state_machine
 from room import protocol
@@ -75,6 +75,162 @@ class RoomManager:
         self.bot_svc = BotService(self)
 
     # ================================================================
+    # 启动恢复：从 Redis 重建内存状态
+    # ================================================================
+
+    async def startup_restore(self) -> None:
+        """
+        服务重启后从 Redis 恢复房间状态。
+        在 lifespan 中 Redis 初始化完成后调用，先于任何 WebSocket 连接建立。
+        """
+        redis = get_redis()
+        if redis is None:
+            logger.info("[startup] Redis 不可用，跳过房间恢复")
+            return
+
+        try:
+            room_names = await redis.smembers("room_index")
+        except Exception as e:
+            logger.error("[startup] 读取 room_index 失败: %s", e)
+            return
+
+        if not room_names:
+            logger.info("[startup] Redis 中无活跃房间，无需恢复")
+            return
+
+        logger.info("[startup] 发现 %d 个待恢复房间", len(room_names))
+        restored = skipped = 0
+        for raw_name in room_names:
+            room_name = raw_name if isinstance(raw_name, str) else raw_name.decode()
+            try:
+                ok = await self._restore_one_room(room_name)
+                if ok:
+                    restored += 1
+                else:
+                    skipped += 1
+            except Exception as e:
+                logger.error("[startup] 恢复房间异常 [%s]: %s", room_name, e)
+                skipped += 1
+
+        logger.info("[startup] 房间恢复完成：成功 %d，跳过/清理 %d", restored, skipped)
+
+    async def _restore_one_room(self, room_name: str) -> bool:
+        """
+        从 Redis 恢复单个房间到内存。
+        返回 True = 已写入内存；False = 跳过（过期/已销毁/数据损坏）。
+        """
+        redis = get_redis()
+
+        # ── 1. 加载并解析 Room ─────────────────────────────────────
+        try:
+            room_data = await redis.hgetall(f"room:{room_name}")
+        except Exception as e:
+            logger.warning("[startup] 读取 Room 数据失败 [%s]: %s", room_name, e)
+            return False
+
+        if not room_data:
+            # room_index 中有条目但 Hash 不存在，清理脏索引
+            try:
+                await redis.srem("room_index", room_name)
+            except Exception:
+                pass
+            return False
+
+        try:
+            room = Room.from_redis_dict(room_data)
+        except Exception as e:
+            logger.warning("[startup] 解析 Room 数据失败 [%s]: %s", room_name, e)
+            return False
+
+        # ── 2. 跳过终态 / 过期房间 ─────────────────────────────────
+        if room.status == RoomStatus.DESTROYED:
+            logger.info("[startup] 跳过 DESTROYED 房间 [%s]，清理 Redis", room_name)
+            await self._cleanup_redis(room_name)
+            return False
+
+        now = time.time()
+        if room.expires_at <= now:
+            logger.info("[startup] 房间已过期 [%s]（expires_at=%.0f），清理 Redis", room_name, room.expires_at)
+            await self._cleanup_redis(room_name)
+            return False
+
+        # ── 3. 加载 PlayerSession（所有玩家标记为离线）──────────────
+        sessions: dict[str, PlayerSession] = {}
+        for pid in room.player_ids:
+            if pid == BOT_ID:
+                continue  # bot 无实体会话
+            try:
+                sd = await redis.hgetall(f"player_session:{room_name}:{pid}")
+                if sd:
+                    session = PlayerSession.from_redis_dict(sd)
+                    session.mark_offline()  # 重启后所有玩家均处于离线状态
+                    sessions[pid] = session
+            except Exception as e:
+                logger.warning("[startup] 读取 Session 失败 [%s/%s]: %s", room_name, pid, e)
+
+        # ── 4. 写入内存 ────────────────────────────────────────────
+        self.rooms[room_name] = room
+        self.sessions[room_name] = sessions
+        original_status = room.status
+
+        # ── 5. 按状态分类处理 ─────────────────────────────────────
+        if room.status in (RoomStatus.RUNNING, RoomStatus.RECONNECT):
+            # 服务重启等价于全员断线，尝试从快照完整恢复
+            snapshot = await self.snapshot_mgr.load_snapshot(room_name)
+
+            if snapshot and "yama" in snapshot:
+                # 新格式快照：包含 yama，可完整重建游戏对象，进入 RECONNECT 等待玩家回来
+                room.status = RoomStatus.RECONNECT
+                await self._sync_room_to_redis(room)
+
+                try:
+                    game = ChinitsuGame.from_snapshot(snapshot)
+                    self.games[room_name] = game
+                    logger.info("[startup] 游戏对象已从快照重建 [%s]", room_name)
+                except Exception as e:
+                    logger.warning("[startup] 游戏对象重建失败 [%s]: %s", room_name, e)
+
+                # 为每名人类玩家启动重连超时计时器（给满额的 RECONNECT_TIMEOUT_SEC）
+                for pid in sessions:
+                    await self.timers.schedule(
+                        f"reconnect:{room_name}:{pid}",
+                        RECONNECT_TIMEOUT_SEC,
+                        self.reconnect_mgr._on_reconnect_timeout,
+                        room_name, room.room_id, pid,
+                    )
+
+                logger.info("[startup] 已恢复为 RECONNECT [%s]（原=%s），%d 名玩家等待重连",
+                            room_name, original_status.value, len(sessions))
+            else:
+                # 旧格式快照（无 yama）或无快照：无法继续游戏，重置为 WAITING 让玩家重新开始
+                room.status = RoomStatus.WAITING
+                room.ready_user_ids = set()
+                room.continue_user_ids = set()
+                await self._sync_room_to_redis(room)
+                await self.snapshot_mgr.delete_snapshot(room_name)
+                reason = "快照缺少 yama 字段（旧格式）" if snapshot else "无快照"
+                logger.info("[startup] 无法恢复游戏 [%s]（%s），重置为 WAITING", room_name, reason)
+
+        elif room.status == RoomStatus.WAITING:
+            logger.info("[startup] 恢复 WAITING 房间 [%s]，%d 名玩家", room_name, len(sessions))
+
+        elif room.status == RoomStatus.ENDED:
+            # 预加载快照到内存，方便玩家重连时推送 game_snapshot
+            await self.snapshot_mgr.load_snapshot(room_name)
+            logger.info("[startup] 恢复 ENDED 房间 [%s]", room_name)
+
+        # ── 6. 重新调度房间寿命计时器（剩余时间）────────────────────
+        remaining_lifetime = max(30.0, room.expires_at - now)
+        await self.timers.schedule(
+            f"room_expire:{room_name}",
+            remaining_lifetime,
+            self._on_room_expired,
+            room_name, room.room_id,
+        )
+
+        return True
+
+    # ================================================================
     # 公开接口：connect / disconnect / handle_action
     # ================================================================
 
@@ -103,6 +259,18 @@ class RoomManager:
             return False
 
         room = self.rooms.get(room_name)
+
+        # ── 防御性检查：DESTROYED 僵尸房间 ────────────
+        # cleanup_room 的中间步骤若抛出异常，rooms.pop 可能未执行，
+        # 导致状态为 DESTROYED 的房间残留在内存中。
+        # 将其视为不存在，清理内存残留，走创建新房间流程。
+        if room is not None and room.status == RoomStatus.DESTROYED:
+            logger.warning("发现内存中的僵尸房间 [%s]，清理并重建", room_name)
+            self.rooms.pop(room_name, None)
+            self.sessions.pop(room_name, None)
+            self.spectators.pop(room_name, None)
+            self.games.pop(room_name, None)
+            room = None
 
         # ── 场景 1：房间处于 RECONNECT，尝试重连 ──────
         if room is not None and room.status == RoomStatus.RECONNECT:
@@ -258,6 +426,10 @@ class RoomManager:
         if room is None:
             return
 
+        # DESTROYED 状态不处理任何 action（cleanup_room 可能还未关闭 WS）
+        if room.status == RoomStatus.DESTROYED:
+            return
+
         # 旁观者不允许发送任何 action
         if self._get_spectator(room_name, user_id) is not None:
             await self.push.unicast_spectator(
@@ -327,6 +499,10 @@ class RoomManager:
         bot_level: str = "normal",
     ) -> None:
         """创建新房间（[空] → WAITING）"""
+        # 清理 Redis 中可能残留的同名孤立数据（服务进程崩溃后可能遗留）。
+        # 在写入新房间数据之前调用，确保 Redis 状态干净。
+        await self._cleanup_redis(room_name)
+
         now = time.time()
         room_id = str(uuid.uuid4())
 
@@ -896,7 +1072,10 @@ class RoomManager:
         logger.info("状态转移 [%s]: %s --%s--> %s",
                      room.room_name, old_status.value, event.value, new_status.value)
 
-        await self._sync_room_to_redis(room)
+        # DESTROYED 是终态，不写 Redis：cleanup_room 会立即删除该 key。
+        # 若提前写入 destroyed 再删除，一旦删除失败就会留下僵尸键。
+        if new_status != RoomStatus.DESTROYED:
+            await self._sync_room_to_redis(room)
 
     async def cleanup_room(self, room_name: str, room_id: str, reason: str) -> None:
         """
@@ -910,33 +1089,39 @@ class RoomManager:
 
         logger.info("销毁房间 [%s] 原因=%s", room_name, reason)
 
-        # 关闭所有连接
-        await self.push.close_all_connections(
-            room_name,
-            code=WS_CLOSE_ROOM_CLOSED[0],
-            reason=reason,
-        )
+        try:
+            # 关闭所有连接
+            await self.push.close_all_connections(
+                room_name,
+                code=WS_CLOSE_ROOM_CLOSED[0],
+                reason=reason,
+            )
 
-        # 取消所有定时器
-        await self.timers.cancel_prefix(f"room_expire:{room_name}")
-        await self.timers.cancel_prefix(f"reconnect:{room_name}")
-        await self.timers.cancel_prefix(f"skip_ron:{room_name}")
-        await self.timers.cancel_prefix(f"action:{room_name}")
+            # 取消所有定时器
+            await self.timers.cancel_prefix(f"room_expire:{room_name}")
+            await self.timers.cancel_prefix(f"reconnect:{room_name}")
+            await self.timers.cancel_prefix(f"skip_ron:{room_name}")
+            await self.timers.cancel_prefix(f"action:{room_name}")
 
-        # 清理子服务数据
-        self.ready_svc.cleanup_room(room_name)
-        self.end_svc.cleanup_room(room_name)
-        self.bot_svc.cleanup_room(room_name)
-        await self.snapshot_mgr.delete_snapshot(room_name)
+            # 清理子服务数据
+            self.ready_svc.cleanup_room(room_name)
+            self.end_svc.cleanup_room(room_name)
+            self.bot_svc.cleanup_room(room_name)
+            await self.snapshot_mgr.delete_snapshot(room_name)
 
-        # 清理 Redis
-        await self._cleanup_redis(room_name)
+            # 清理 Redis
+            await self._cleanup_redis(room_name)
 
-        # 清理内存（含旁观者）
-        self.rooms.pop(room_name, None)
-        self.sessions.pop(room_name, None)
-        self.spectators.pop(room_name, None)
-        self.games.pop(room_name, None)
+        except Exception as e:
+            logger.error("cleanup_room 中发生错误 [%s]: %s", room_name, e)
+
+        finally:
+            # 内存清理放在 finally 中：即使上方出现异常，也必须清除内存残留，
+            # 否则状态为 DESTROYED 的房间会一直占据 self.rooms，导致僵尸房间。
+            self.rooms.pop(room_name, None)
+            self.sessions.pop(room_name, None)
+            self.spectators.pop(room_name, None)
+            self.games.pop(room_name, None)
 
     # ================================================================
     # 辅助方法
@@ -1023,6 +1208,9 @@ class RoomManager:
         try:
             key = f"room:{room.room_name}"
             await redis.hset(key, mapping=room.to_redis_dict())
+            # TTL 为房间最大寿命 + 30 分钟缓冲，作为最后防线：
+            # 即使 cleanup_room 完全失败，Redis 也会在此时间后自动删除孤立键。
+            await redis.expire(key, ROOM_MAX_LIFETIME_SEC + 30 * 60)
             await redis.sadd("room_index", room.room_name)
         except Exception as e:
             logger.warning("同步 Room 到 Redis 失败 [%s]: %s", room.room_name, e)

@@ -21,6 +21,8 @@ async def lifespan(_app: FastAPI):
     # 启动时初始化数据库和 Redis
     await init_db()
     await init_redis()
+    # 从 Redis 恢复上次服务进程中的活跃房间（断线重连、游戏继续）
+    await room_manager.startup_restore()
     yield
     # 关闭时清理 Redis 连接
     await close_redis()
