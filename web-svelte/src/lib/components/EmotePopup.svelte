@@ -1,12 +1,13 @@
 <script lang="ts">
-	import { emotePopup } from '$lib/chat';
+	import { emotePopup, EMOTES } from '$lib/chat';
 
 	let popup = $derived($emotePopup);
+	let emoteDef = $derived(popup ? EMOTES[popup.emoteId] : null);
 </script>
 
-{#if popup}
+{#if popup && emoteDef}
 	<div class="emote-popup" class:is-me={popup.isMe} class:is-opp={!popup.isMe}>
-		<span class="emote-text">{popup.text}</span>
+		<img src={emoteDef.src} alt={emoteDef.label} class="emote-img" />
 	</div>
 {/if}
 
@@ -17,16 +18,6 @@
 		transform: translateX(-50%);
 		pointer-events: none;
 		z-index: 50;
-
-		background: rgba(0, 0, 0, 0.75);
-		color: #fff;
-		border-radius: 1.2rem;
-		padding: 0.5rem 1.1rem;
-		font-size: 2rem;
-		white-space: nowrap;
-		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-
-		animation: emote-rise 2.5s ease forwards;
 	}
 
 	/* Opponent emote: anchored near the top zone */
@@ -39,16 +30,35 @@
 		bottom: 18%;
 	}
 
-	.emote-text {
+	.emote-img {
 		display: block;
-		line-height: 1;
+		width: 120px;
+		height: 120px;
+		border-radius: 1rem;
+		box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
 	}
 
-	@keyframes emote-rise {
-		0%   { opacity: 0; transform: translateX(-50%) translateY(8px) scale(0.6); }
-		15%  { opacity: 1; transform: translateX(-50%) translateY(0)   scale(1.15); }
-		25%  { opacity: 1; transform: translateX(-50%) translateY(0)   scale(1); }
-		75%  { opacity: 1; transform: translateX(-50%) translateY(0)   scale(1); }
-		100% { opacity: 0; transform: translateX(-50%) translateY(-8px) scale(0.9); }
+	/* Emote shoots out from player position */
+	.emote-popup.is-me .emote-img {
+		animation: shoot-up 2.5s ease forwards;
+	}
+	.emote-popup.is-opp .emote-img {
+		animation: shoot-down 2.5s ease forwards;
+	}
+
+	@keyframes shoot-up {
+		0%   { opacity: 0; transform: scale(0.2) translateY(80px); }
+		12%  { opacity: 1; transform: scale(1.15) translateY(0); }
+		20%  { opacity: 1; transform: scale(1) translateY(0); }
+		75%  { opacity: 1; transform: scale(1) translateY(0); }
+		100% { opacity: 0; transform: scale(0.95) translateY(-10px); }
+	}
+
+	@keyframes shoot-down {
+		0%   { opacity: 0; transform: scale(0.2) translateY(-80px); }
+		12%  { opacity: 1; transform: scale(1.15) translateY(0); }
+		20%  { opacity: 1; transform: scale(1) translateY(0); }
+		75%  { opacity: 1; transform: scale(1) translateY(0); }
+		100% { opacity: 0; transform: scale(0.95) translateY(10px); }
 	}
 </style>
