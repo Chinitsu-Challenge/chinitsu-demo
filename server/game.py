@@ -430,12 +430,14 @@ class ChinitsuGame:
                 self.next_oya = player_id
                 p.is_oya = True
                 opp.is_oya = False
+                winner_hand = list(p.hand) if is_tsumo else list(p.hand) + [opp.kawa[-1][0]]
                 public_info.update({
                     "agari": True,
                     "han": agari.han,
                     "fu": agari.fu,
                     "point": win_amount,
-                    "yaku": [str(y) for y in agari.yaku]
+                    "yaku": [str(y) for y in agari.yaku],
+                    "winner_hand": winner_hand,
                 })
             else:
                 punishment = self.rules['no_agari_punishment']
