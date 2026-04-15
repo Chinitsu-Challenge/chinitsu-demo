@@ -71,10 +71,16 @@ class TestProtocolFormat:
 
     def test_make_match_ended(self):
         scores = {"uid-alice": 200, "uid-bob": 100}
-        msg = protocol.make_match_ended("point_zero", scores)
+        msg = protocol.make_match_ended("point_zero", scores, winner_id="uid-alice")
         self._check_base(msg, broadcast=True, event="match_ended")
         assert msg["reason"] == "point_zero"
         assert msg["final_scores"]["uid-alice"] == 200
+        assert msg["winner_id"] == "uid-alice"
+
+    def test_make_match_ended_draw(self):
+        scores = {"uid-alice": 150, "uid-bob": 150}
+        msg = protocol.make_match_ended("round_limit_reached", scores, winner_id=None)
+        assert msg["winner_id"] is None
 
     # ── 重连类事件 ────────────────────────────────────────────
 

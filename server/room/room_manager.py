@@ -777,8 +777,15 @@ class RoomManager:
         players = snapshot.get("players", {})
         final_scores = {pid: pdata.get("point", 0) for pid, pdata in players.items()}
 
+        # 确定胜者：积分最高者；若积分相同则 winner_id = None（平局）
+        sorted_players = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
+        if len(sorted_players) >= 2 and sorted_players[0][1] != sorted_players[1][1]:
+            winner_id = sorted_players[0][0]
+        else:
+            winner_id = None
+
         # 广播比赛结束
-        await self.push.broadcast(room_name, protocol.make_match_ended(reason, final_scores))
+        await self.push.broadcast(room_name, protocol.make_match_ended(reason, final_scores, winner_id))
 
         logger.info("比赛结束 [%s] 原因=%s 分数=%s", room_name, reason, final_scores)
 

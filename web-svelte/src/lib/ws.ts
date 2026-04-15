@@ -20,7 +20,8 @@ export const gameState = writable<GameState>({
 	selectedIdx: null,
 	wallCount: 36,
 	kyoutaku: 0,
-	oppDisplayName: ''
+	oppDisplayName: '',
+	matchResult: null
 });
 
 export const logs = writable<{ text: string; type: string }[]>([]);
@@ -285,7 +286,8 @@ function handleBroadcastEvent(data: Record<string, unknown>) {
 	}
 
 	if (event === 'match_restarted') {
-		gameState.update((s) => ({ ...s, phase: 'waiting' }));
+		gameState.update((s) => ({ ...s, phase: 'waiting', matchResult: null }));
+		agariResult.set(null);
 		logMsg('Match restarted. Click Start to begin!', 'broadcast');
 		return;
 	}
@@ -293,13 +295,12 @@ function handleBroadcastEvent(data: Record<string, unknown>) {
 	if (event === 'match_ended') {
 		const reason = data.reason as string;
 		const scores = data.final_scores as Record<string, number>;
-		const myScore = scores[myId] ?? 0;
-		const oppScore = scores[oppId] ?? 0;
-		logMsg(
-			`Match over (${reason}). Final — You: ${myScore.toLocaleString()}, Opp: ${oppScore.toLocaleString()}`,
-			'broadcast'
-		);
-		gameState.update((s) => ({ ...s, phase: 'ended' }));
+		const winnerId = (data.winner_id as string | null) ?? null;
+		gameState.update((s) => ({
+			...s,
+			phase: 'ended',
+			matchResult: { reason, winnerId, finalScores: scores },
+		}));
 		return;
 	}
 

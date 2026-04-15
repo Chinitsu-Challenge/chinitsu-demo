@@ -75,13 +75,14 @@ def make_room_closed(reason: str) -> dict:
     }
 
 
-def make_match_ended(reason: str, final_scores: dict[str, int]) -> dict:
-    """比赛结束通知（广播），附带最终分数"""
+def make_match_ended(reason: str, final_scores: dict[str, int], winner_id: str | None) -> dict:
+    """比赛结束通知（广播），附带最终分数与胜者 ID（平局时为 None）"""
     return {
         "broadcast": True,
         "event": "match_ended",
         "reason": reason,
         "final_scores": final_scores,
+        "winner_id": winner_id,
     }
 
 

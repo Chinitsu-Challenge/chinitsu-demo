@@ -3,6 +3,12 @@ export interface KawaEntry {
 	isRiichi: boolean;
 }
 
+export interface MatchResult {
+	reason: 'round_limit_reached' | 'point_zero' | string;
+	winnerId: string | null;
+	finalScores: Record<string, number>;
+}
+
 export interface GameState {
 	phase: 'lobby' | 'waiting' | 'playing' | 'ended' | 'waiting_new_game';
 	myHand: string[];
@@ -21,6 +27,7 @@ export interface GameState {
 	wallCount: number;
 	kyoutaku: number;
 	oppDisplayName: string;
+	matchResult: MatchResult | null;
 }
 
 export interface SpectatorPlayerData {

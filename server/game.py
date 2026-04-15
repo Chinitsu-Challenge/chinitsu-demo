@@ -217,11 +217,12 @@ class ChinitsuGame:
         self.set_rules(rules)
 
     def set_rules(self, rules: dict):
-
-        self.rules = default_rules
+        # Copy default_rules to avoid mutating the module-level dict across games.
+        self.rules = dict(default_rules)
         if rules is not None:
             self.rules.update(rules)
-        self.agari_judger = AgariJudger(self.rules['yaku_rules'])
+        # Unpack yaku_rules dict as kwargs so has_daisharin/renhou_as_yakuman are passed correctly.
+        self.agari_judger = AgariJudger(**self.rules['yaku_rules'])
 
     @property
     def player_ids(self):
@@ -496,6 +497,8 @@ class ChinitsuGame:
                 return res
             try:
                 card = p.discard(card_idx, is_riichi=False)
+                if self.rules.get('sort_hand'):
+                    p.hand.sort()
                 public_info["card_idx"] = card_idx
                 public_info["card"] = card
                 res = {player_id: {"message": "ok", "hand": p.hand}}
@@ -513,6 +516,8 @@ class ChinitsuGame:
                 return res
             try:
                 card = p.discard(card_idx, is_riichi=True)
+                if self.rules.get('sort_hand'):
+                    p.hand.sort()
                 p.is_riichi = True
                 p.riichi_machi = set(get_tenpai_tiles(p.hand))  # save machi for later kan checks
                 if is_tenchii_tenpai:
@@ -659,7 +664,11 @@ class ChinitsuGame:
 
             }
 
-            agari = self.agari_judger.judge(p.hand + [opp.kawa[-1][0]], p.fuuro, opp.kawa[-1][0], **agari_condition)
+            ron_tile = opp.kawa[-1][0]
+            logger.debug("RON attempt: %s hand=%s fuuro=%s win=%s riichi=%s",
+                         player_id, p.hand, p.fuuro, ron_tile, p.is_riichi)
+            agari = self.agari_judger.judge(p.hand + [ron_tile], p.fuuro, ron_tile, **agari_condition)
+            logger.debug("RON result: han=%s error=%s", agari.han, agari.error)
             res = process_agari(agari, is_tsumo=False, is_oya=p.is_oya)
 
         # skip opponent turn (choose not to ron)
