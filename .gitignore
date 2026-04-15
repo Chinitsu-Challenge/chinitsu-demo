@@ -3,7 +3,7 @@ __pycache__/
 web-svelte/node_modules/
 web-svelte/build/
 web-svelte/.svelte-kit/
-
+.venv/
 *.lock
 
 *.db
@@ -11,4 +11,3 @@ web-svelte/.svelte-kit/
 server/room/tests/test_run.log
 server/room/development_docs/
 *.ps1
-

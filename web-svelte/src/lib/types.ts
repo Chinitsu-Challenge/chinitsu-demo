@@ -23,6 +23,30 @@ export interface GameState {
 	oppDisplayName: string;
 }
 
+export interface SpectatorPlayerData {
+	display_name: string;
+	hand: string[];
+	fuuro: string[][];
+	kawa: KawaEntry[];
+	point: number;
+	is_oya: boolean;
+	is_riichi: boolean;
+	num_kan: number;
+}
+
+export interface SpectatorState {
+	phase: 'watching' | 'watching_ended' | 'lobby';
+	gameStatus: string;
+	turnStage: 'before_draw' | 'after_draw' | 'after_discard' | null;
+	currentPlayer: string | null;
+	wallCount: number;
+	roundNo: number;
+	roundLimit: number;
+	kyoutaku: number;
+	spectatorCount: number;
+	players: Record<string, SpectatorPlayerData>;
+}
+
 export interface TenpaiInfo {
 	is_tenpai: boolean;
 	hand: string[];

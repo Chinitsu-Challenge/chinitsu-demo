@@ -40,10 +40,10 @@ def _room(client: TestClient):
     t1 = _register(client, "p1_" + _uid())
     t2 = _register(client, "p2_" + _uid())
     with client.websocket_connect(f"/ws/{room}?token={t1}") as ws1:
-        ws1.receive_json()  # "Game started… Host is …"
+        ws1.receive_json()  # room_created (unicast to ws1)
         with client.websocket_connect(f"/ws/{room}?token={t2}") as ws2:
-            ws1.receive_json()  # "{p2} joins… Game START!"
-            ws2.receive_json()  # same broadcast to p2
+            ws1.receive_json()  # player_joined (broadcast to ws1)
+            ws2.receive_json()  # player_joined (broadcast to ws2)
             yield ws1, ws2, room
 
 
@@ -57,10 +57,11 @@ def _start(ws1, ws2, debug_code: int = None):
     """
     code = str(debug_code) if debug_code else ""
     ws1.send_json({"action": "start", "card_idx": code})
-    ws1.receive_json()  # waiting_for_opponent — only ws1 gets this
+    ws1.receive_json()  # start_ready_changed (broadcast to both)
+    ws2.receive_json()  # start_ready_changed (drain ws2's copy)
     ws2.send_json({"action": "start", "card_idx": code})
-    msg1 = ws1.receive_json()  # deal message for ws1
-    ws2.receive_json()         # deal message for ws2
+    msg1 = ws1.receive_json()  # game_started for ws1
+    ws2.receive_json()         # game_started for ws2
     return (ws1, ws2) if msg1["is_oya"] else (ws2, ws1)
 
 
@@ -126,7 +127,7 @@ class TestConnection:
         token = _register(client, _uid())
         with client.websocket_connect(f"/ws/{room}?token={token}") as ws:
             msg = ws.receive_json()
-        assert msg["broadcast"] is True
+        assert msg.get("event") == "room_created"
 
     def test_second_player_triggers_game_start_broadcast(self, client):
         room = _uid()
@@ -137,21 +138,30 @@ class TestConnection:
             with client.websocket_connect(f"/ws/{room}?token={t2}") as ws2:
                 msg1 = ws1.receive_json()
                 msg2 = ws2.receive_json()
-        assert "Game START" in msg1["message"]
-        assert msg1["message"] == msg2["message"]
+        assert msg1.get("event") == "player_joined"
+        assert msg1 == msg2
 
-    def test_third_player_rejected_room_full(self, client):
+    def test_third_connection_becomes_spectator(self, client):
+        """Third connection to a full room is admitted as a spectator, not rejected."""
         room = _uid()
         t1, t2, t3 = _register(client, _uid()), _register(client, _uid()), _register(client, _uid())
         with client.websocket_connect(f"/ws/{room}?token={t1}") as ws1:
-            ws1.receive_json()
+            ws1.receive_json()  # room_created
             with client.websocket_connect(f"/ws/{room}?token={t2}") as ws2:
-                ws1.receive_json()
-                ws2.receive_json()
+                ws1.receive_json()  # player_joined (broadcast)
+                ws2.receive_json()  # player_joined (broadcast)
                 with client.websocket_connect(f"/ws/{room}?token={t3}") as ws3:
-                    with pytest.raises(WebSocketDisconnect) as exc:
-                        ws3.receive_json()
-                    assert exc.value.code == 1003
+                    # broadcast() fans out to players AND the spectator itself
+                    joined1 = ws1.receive_json()
+                    joined2 = ws2.receive_json()
+                    joined3 = ws3.receive_json()
+                    assert joined1["event"] == "spectator_joined"
+                    assert joined1["spectator_count"] == 1
+                    assert joined1 == joined2 == joined3
+                    # Spectator then receives the initial state snapshot
+                    snap = ws3.receive_json()
+                    assert snap["event"] == "spectator_snapshot"
+                    assert snap["game_status"] == "waiting"
 
     def test_duplicate_player_id_rejected(self, client):
         """Same user (same UUID from JWT) cannot join the same room twice."""
@@ -174,12 +184,14 @@ class TestGameStart:
         with _room(client) as (ws1, ws2, _):
             ws1.send_json({"action": "start", "card_idx": ""})
             reply = ws1.receive_json()
-        assert reply["message"] == "waiting_for_opponent"
+        assert reply.get("event") == "start_ready_changed"
+        assert reply.get("all_ready") is False
 
     def test_start_deals_14_to_oya_13_to_ko(self, client):
         with _room(client) as (ws1, ws2, _):
             ws1.send_json({"action": "start", "card_idx": ""})
-            ws1.receive_json()  # waiting_for_opponent
+            ws1.receive_json()  # start_ready_changed (broadcast)
+            ws2.receive_json()  # start_ready_changed (drain ws2's copy)
             ws2.send_json({"action": "start", "card_idx": ""})
             msg1 = ws1.receive_json()
             msg2 = ws2.receive_json()
@@ -188,7 +200,8 @@ class TestGameStart:
     def test_start_assigns_exactly_one_oya(self, client):
         with _room(client) as (ws1, ws2, _):
             ws1.send_json({"action": "start", "card_idx": ""})
-            ws1.receive_json()
+            ws1.receive_json()  # start_ready_changed (broadcast)
+            ws2.receive_json()  # start_ready_changed (drain ws2's copy)
             ws2.send_json({"action": "start", "card_idx": ""})
             msg1 = ws1.receive_json()
             msg2 = ws2.receive_json()
@@ -198,7 +211,8 @@ class TestGameStart:
         """Chinitsu variant uses only the souzu (bamboo) suit."""
         with _room(client) as (ws1, ws2, _):
             ws1.send_json({"action": "start", "card_idx": ""})
-            ws1.receive_json()
+            ws1.receive_json()  # start_ready_changed (broadcast)
+            ws2.receive_json()  # start_ready_changed (drain ws2's copy)
             ws2.send_json({"action": "start", "card_idx": ""})
             msg1 = ws1.receive_json()
             msg2 = ws2.receive_json()

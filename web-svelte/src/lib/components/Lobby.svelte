@@ -11,7 +11,11 @@
 	let status = $state('');
 	let connecting = $state(false);
 
-	// Room settings
+	// vs-CPU
+	let vsBot = $state(false);
+	let botLevel = $state('normal');
+
+	// Room settings (host only)
 	let initialPoint = $state(150000);
 	let noAgariPunishment = $state(20000);
 	let sortHand = $state(false);
@@ -38,13 +42,19 @@
 			initialPoint,
 			noAgariPunishment,
 			sortHand,
+			vsBot,
+			botLevel,
 		};
 		const code = parseInt(debugCode, 10);
 		if (!isNaN(code) && code > 100) settings.debugCode = code;
 
 		const result = await connect(roomName.trim(), settings);
 		if (!result.ok) {
-			status = result.reason ?? 'Connection failed.';
+			// duplicate_id: +page.svelte switches to the dedicated waiting screen,
+			// so we just clear the connecting state here — no error text needed.
+			if (result.reason !== 'duplicate_id') {
+				status = result.reason ?? 'Connection failed.';
+			}
 			connecting = false;
 		}
 	}
@@ -76,6 +86,20 @@
 				onkeydown={handleRoomKeydown}
 				placeholder="Room to join or create"
 			/>
+		</div>
+
+		<div class="form-group bot-row">
+			<label class="checkbox-label">
+				<input type="checkbox" bind:checked={vsBot} />
+				Play vs CPU
+			</label>
+			{#if vsBot}
+				<select bind:value={botLevel} class="level-select">
+					<option value="easy">Easy</option>
+					<option value="normal">Normal</option>
+					<option value="hard">Hard</option>
+				</select>
+			{/if}
 		</div>
 
 		<div class="settings-section">
@@ -164,7 +188,34 @@
 	.link-btn:hover {
 		color: #81d4fa;
 	}
-
+	.bot-row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+	.checkbox-label {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.9rem;
+		color: #ccc;
+		cursor: pointer;
+		user-select: none;
+	}
+	.checkbox-label input[type='checkbox'] {
+		width: 1rem;
+		height: 1rem;
+		cursor: pointer;
+	}
+	.level-select {
+		background: #1e2a38;
+		color: #e0e0e0;
+		border: 1px solid #4fc3f7;
+		border-radius: 4px;
+		padding: 0.25rem 0.5rem;
+		font-size: 0.85rem;
+		cursor: pointer;
+	}
 	.settings-section {
 		border: 1px solid #333;
 		border-radius: 8px;

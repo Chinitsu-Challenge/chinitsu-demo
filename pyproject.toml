@@ -13,10 +13,18 @@ dependencies = [
     "bcrypt",
     "python-jose[cryptography]",
     "aiosqlite",
+    "redis>=7.4.0",
 ]
 
 [project.optional-dependencies]
 test = ["pytest", "httpx"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "server/room/tests"]
+pythonpath = ["server", "server/room/tests"]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.0.2",
+]

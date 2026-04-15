@@ -51,7 +51,7 @@
 						{#each result.hand as card}
 							<img
 								class="agari-tile"
-								src="/assets/{card}_{result.isMe ? 0 : 2}.png"
+								src="/assets/{card}_0.png"
 								alt={card}
 							/>
 						{/each}

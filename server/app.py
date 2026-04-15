@@ -3,20 +3,25 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from database import init_db
+from redis_client import init_redis, close_redis
 from auth import verify_token, register_user, authenticate_user
 from models import RegisterRequest, LoginRequest, TokenResponse
-from managers import GameManager, ConnectionManager
+from room.room_manager import RoomManager
+from room.errors import WS_CLOSE_INVALID_TOKEN
+from managers import ConnectionManager
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     await init_db()
+    await init_redis()
     yield
+    await close_redis()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -62,11 +67,29 @@ _SERVER_DIR = Path(__file__).resolve().parent        # server/
 _PROJECT_DIR = _SERVER_DIR.parent                    # project root
 
 # Global instances
-gm = GameManager()
-manager = ConnectionManager(gm)
+room_manager = RoomManager()
+manager = ConnectionManager(room_manager)
 
 # Mount static files (tile assets)
 app.mount("/assets", StaticFiles(directory=_SERVER_DIR / "assets"), name="assets")
+
+
+@app.get("/api/active_room")
+async def api_active_room(authorization: str = Header(default="")):
+    """返回玩家当前所在的活跃房间（用于前端页面加载时自动重连）"""
+    token = authorization[7:] if authorization.startswith("Bearer ") else ""
+    payload = verify_token(token) if token else None
+    if payload is None:
+        return JSONResponse(status_code=401, content={"detail": "invalid_token"})
+    user_id = payload["uuid"]
+    room_name = room_manager.get_user_active_room(user_id)
+    if room_name is None:
+        return JSONResponse(content={"room_name": None})
+    room = room_manager.rooms.get(room_name)
+    return JSONResponse(content={
+        "room_name": room_name,
+        "room_status": room.status.value if room else None,
+    })
 
 
 @app.websocket("/ws/{room_name}")
@@ -74,20 +97,24 @@ async def websocket_endpoint(
     websocket: WebSocket,
     room_name: str,
     token: str = Query(""),
+    bot: str = Query(""),
+    level: str = Query("normal"),
     initial_point: int = Query(default=None),
     no_agari_punishment: int = Query(default=None),
     debug_code: int = Query(default=None),
     sort_hand: bool = Query(default=None),
 ):
-    # Validate JWT token
     payload = verify_token(token)
     if payload is None:
         await websocket.accept()
-        await websocket.close(code=1008, reason="invalid_token")
+        await websocket.close(code=WS_CLOSE_INVALID_TOKEN[0], reason=WS_CLOSE_INVALID_TOKEN[1])
         return
 
     player_id = payload["uuid"]
     display_name = payload["username"]
+
+    vs_bot = (bot == "1")
+    bot_level = level if level in ("easy", "normal", "hard") else "normal"
 
     rules = {}
     if initial_point is not None:
@@ -97,8 +124,16 @@ async def websocket_endpoint(
     if sort_hand is not None:
         rules["sort_hand"] = sort_hand
 
-    if not await manager.connect(websocket, room_name, player_id, display_name,
-                                  rules=rules or None, debug_code=debug_code):
+    try:
+        connected = await manager.connect(
+            websocket, room_name, player_id, display_name,
+            vs_bot=vs_bot, bot_level=bot_level,
+            rules=rules or None, debug_code=debug_code,
+        )
+    except Exception:
+        logger.exception("manager.connect 异常 [%s/%s]", room_name, player_id[:8])
+        return
+    if not connected:
         return
 
     try:
@@ -106,8 +141,7 @@ async def websocket_endpoint(
             data = await websocket.receive_json()
             await manager.game_action(data, room_name, player_id)
     except WebSocketDisconnect:
-        manager.disconnect(websocket, room_name, player_id)
-        await manager.broadcast(f"{display_name} left the room {room_name}", room_name)
+        await manager.disconnect(websocket, room_name, player_id)
 
 
 # API docs (AsyncAPI spec + viewer) — must come before the root mount

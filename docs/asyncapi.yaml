@@ -1,119 +1,430 @@
 asyncapi: '2.6.0'
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Chinitsu Showdown — AsyncAPI Spec
+# Chinitsu Showdown — AsyncAPI Spec (v2)
 #
 # HOW TO MAINTAIN THIS FILE
 # ──────────────────────────────────────────────────────────────────────────────
-# • This is the single source of truth for the WebSocket (and future HTTP) API.
-# • When adding a new WebSocket action:
-#     1. Add the action name to components/schemas/ActionType/enum
-#     2. Add a message entry under components/messages/ if the payload differs
-#     3. Reference it in the channel's publish/subscribe oneOf list
-# • When adding HTTP endpoints, add them as new channels with the http binding.
-# • Validate this file online at https://studio.asyncapi.com (paste YAML there)
-#   or run: npx @asyncapi/cli validate docs/asyncapi.yaml
+# • This is the single source of truth for the WebSocket and HTTP API.
+# • New WebSocket action → add to ActionType/enum; add message def if payload differs.
+# • New broadcast event → add to BroadcastEventType/enum; add payload schema.
+# • New unicast event  → add to UnicastEventType/enum; add payload schema.
+# • New HTTP endpoint  → new channel with `http` binding.
+# • New error code     → add to ErrorCode/enum.
+# • New WS close reason → update WsCloseReason/enum and channel description table.
+# • Validate: npx @asyncapi/cli validate docs/asyncapi.yaml
 # ──────────────────────────────────────────────────────────────────────────────
 
 info:
   title: Chinitsu Showdown API
-  version: '1.0.0'
+  version: '2.0.0'
   description: |
     Two-player real-time Chinitsu (all-one-suit) mahjong game.
 
     All game communication happens over a single WebSocket connection per player.
-    Connect to `/ws/{room_name}/{player_id}`, send JSON action messages, and
-    receive JSON game-state updates in return.
+    Identity is derived from a JWT passed as the `token` query parameter.
+    HTTP endpoints handle account registration, login, and session lookup.
 
 servers:
   local:
     url: 'localhost:8000'
     protocol: ws
-    description: Local development server
+    description: Local development server (WebSocket + HTTP on same port)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Channels
+# ──────────────────────────────────────────────────────────────────────────────
 
 channels:
-  /ws/{room_name}/{player_id}:
+
+  # ── WebSocket game channel ─────────────────────────────────────────────────
+  /ws/{room_name}:
     description: |
       Main game channel. One connection per player per room.
+      Player identity (UUID + display name) is taken from the JWT in `?token=`.
 
-      **Connection lifecycle:**
-      - First player to connect creates the room (game enters WAITING state).
-      - Second player connecting triggers RUNNING state.
-      - On disconnect during RUNNING, game enters RECONNECT state; rejoining
-        the same room with the same player_id resumes play.
-      - If a room becomes empty, it is destroyed.
+      **Room lifecycle:**
+      | State      | Description |
+      |------------|-------------|
+      | WAITING    | Room created; waiting for both players to click Start |
+      | RUNNING    | Match in progress (multiple rounds) |
+      | RECONNECT  | One player dropped; 120 s to reconnect before forfeit |
+      | ENDED      | All rounds finished or a player's points reached 0 |
+
+      **Reconnect behaviour:**
+      - RUNNING disconnect → room enters RECONNECT, snapshot saved to Redis.
+      - Player reconnects to the same `room_name` with a valid JWT → snapshot pushed.
+      - WAITING/ENDED disconnect with 2 players → session preserved; same path reconnects.
+      - If both players are offline simultaneously → room destroyed immediately.
+
+      **One-room-per-player policy:**
+      A player may only be in one room at a time. Connecting to a different room
+      while already in an active room is rejected with close code 1003 / `already_in_room`.
 
       **WebSocket close codes:**
-      | Code | Reason |
-      |------|--------|
-      | 1003 | `room_full` — room already has 2 players |
-      | 1003 | `duplicate_id` — player_id already in use in this room |
+      | Code | Reason | Cause |
+      |------|--------|-------|
+      | 1001 | `room_expired` | Room 40-minute lifetime elapsed |
+      | 1001 | `room_closed` | Room destroyed (end_game / both offline) |
+      | 1003 | `room_full` | Room already has 2 active players |
+      | 1003 | `spectator_room_full` | Spectator slot limit (10) reached |
+      | 1003 | `duplicate_id` | Player is already online in this room |
+      | 1003 | `invalid_room_name` | Room name empty or longer than 20 characters |
+      | 1003 | `already_in_room` | Player has an active session in another room |
+      | 1008 | `invalid_token` | JWT missing, expired, or invalid |
+
     parameters:
       room_name:
-        description: Room identifier (max 20 characters)
+        description: Room identifier (1–20 characters, URL-safe)
         schema:
           type: string
+          minLength: 1
           maxLength: 20
           example: 'room1'
-      player_id:
-        description: Player identifier, unique within a room (max 20 characters)
-        schema:
-          type: string
-          maxLength: 20
-          example: 'alice'
 
-    # Messages the CLIENT sends to the SERVER
+    # Client → Server
     publish:
       summary: Player action
       operationId: sendAction
       message:
         $ref: '#/components/messages/ClientAction'
 
-    # Messages the SERVER sends to the CLIENT
+    # Server → Client
     subscribe:
       summary: Server event
       operationId: receiveEvent
       message:
         oneOf:
-          - $ref: '#/components/messages/BroadcastMessage'
-          - $ref: '#/components/messages/GameStateUpdate'
+          # — Room lifecycle (broadcast) —
+          - $ref: '#/components/messages/EvtPlayerJoined'
+          - $ref: '#/components/messages/EvtPlayerLeft'
+          - $ref: '#/components/messages/EvtStartReadyChanged'
+          - $ref: '#/components/messages/EvtContinueVoteChanged'
+          - $ref: '#/components/messages/EvtMatchRestarted'
+          - $ref: '#/components/messages/EvtMatchEnded'
+          - $ref: '#/components/messages/EvtReconnectTimeout'
+          - $ref: '#/components/messages/EvtRoomExpired'
+          - $ref: '#/components/messages/EvtRoomClosed'
+          # — Spectator (broadcast to all) —
+          - $ref: '#/components/messages/EvtSpectatorJoined'
+          - $ref: '#/components/messages/EvtSpectatorLeft'
+          # — Connection (unicast) —
+          - $ref: '#/components/messages/EvtRoomCreated'
+          - $ref: '#/components/messages/EvtOpponentDisconnected'
+          - $ref: '#/components/messages/EvtOpponentReconnected'
+          - $ref: '#/components/messages/EvtError'
+          # — Game (unicast) —
+          - $ref: '#/components/messages/EvtGameStarted'
+          - $ref: '#/components/messages/EvtGameSnapshot'
+          - $ref: '#/components/messages/GameActionResponse'
+          # — Spectator view (unicast to spectator) —
+          - $ref: '#/components/messages/EvtSpectatorSnapshot'
+          - $ref: '#/components/messages/EvtSpectatorGameUpdate'
+
+  # ── HTTP: Register ──────────────────────────────────────────────────────────
+  /api/register:
+    description: Create a new account and receive a JWT.
+    bindings:
+      http:
+        type: request
+        method: POST
+    publish:
+      operationId: register
+      message:
+        $ref: '#/components/messages/RegisterRequest'
+    subscribe:
+      operationId: registerResponse
+      message:
+        $ref: '#/components/messages/AuthResponse'
+
+  # ── HTTP: Login ─────────────────────────────────────────────────────────────
+  /api/login:
+    description: Authenticate and receive a JWT.
+    bindings:
+      http:
+        type: request
+        method: POST
+    publish:
+      operationId: login
+      message:
+        $ref: '#/components/messages/LoginRequest'
+    subscribe:
+      operationId: loginResponse
+      message:
+        $ref: '#/components/messages/AuthResponse'
+
+  # ── HTTP: Active room lookup ─────────────────────────────────────────────────
+  /api/active_room:
+    description: |
+      Returns the room the authenticated player currently belongs to.
+      Used by the frontend on page load to auto-reconnect.
+      Requires `Authorization: Bearer {token}` header.
+      Returns `room_name: null` when the player has no active session.
+    bindings:
+      http:
+        type: request
+        method: GET
+    subscribe:
+      operationId: getActiveRoom
+      message:
+        $ref: '#/components/messages/ActiveRoomResponse'
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Components
+# ──────────────────────────────────────────────────────────────────────────────
 
 components:
   messages:
 
+    # ── Client → Server ────────────────────────────────────────────────────────
+
     ClientAction:
       name: ClientAction
       title: Client Action
-      summary: JSON message sent by a player to perform a game action.
+      summary: JSON action sent by a player.
       payload:
         $ref: '#/components/schemas/ClientActionPayload'
 
-    BroadcastMessage:
-      name: BroadcastMessage
-      title: Broadcast Message
-      summary: Informational text sent to every player in the room (e.g. join/leave events).
-      payload:
-        $ref: '#/components/schemas/BroadcastPayload'
+    # ── HTTP requests / responses ──────────────────────────────────────────────
 
-    GameStateUpdate:
-      name: GameStateUpdate
-      title: Game State Update
+    RegisterRequest:
+      name: RegisterRequest
+      title: Register Request
+      payload:
+        type: object
+        required: [username, password]
+        properties:
+          username:
+            type: string
+            example: 'alice'
+          password:
+            type: string
+            example: 'secret'
+
+    LoginRequest:
+      name: LoginRequest
+      title: Login Request
+      payload:
+        type: object
+        required: [username, password]
+        properties:
+          username:
+            type: string
+          password:
+            type: string
+
+    AuthResponse:
+      name: AuthResponse
+      title: Auth Response
+      summary: Returned by /api/register and /api/login on success.
+      payload:
+        type: object
+        required: [access_token, uuid, username]
+        properties:
+          access_token:
+            type: string
+            description: JWT to pass as `?token=` on WebSocket connections.
+          uuid:
+            type: string
+            description: Stable player UUID derived from the account.
+            example: '550e8400-e29b-41d4-a716-446655440000'
+          username:
+            type: string
+            example: 'alice'
+
+    ActiveRoomResponse:
+      name: ActiveRoomResponse
+      title: Active Room Response
+      payload:
+        type: object
+        required: [room_name]
+        properties:
+          room_name:
+            type: string
+            nullable: true
+            description: Room the player is currently in, or null.
+            example: 'room1'
+          room_status:
+            type: string
+            nullable: true
+            description: Current room state (waiting / running / reconnect / ended).
+            example: 'running'
+
+    # ── Server → Client: broadcast events (broadcast=true) ────────────────────
+
+    EvtPlayerJoined:
+      name: EvtPlayerJoined
+      title: Player Joined
+      summary: A player joined the room. Sent to all players in the room.
+      payload:
+        $ref: '#/components/schemas/PlayerJoinedPayload'
+
+    EvtPlayerLeft:
+      name: EvtPlayerLeft
+      title: Player Left
       summary: |
-        Private game-state snapshot sent to a specific player after each action.
-        Contains the fields relevant to that action; not all fields are present
-        in every update.
+        A player left the room (WAITING state, solo disconnect or lobby leave).
+        Not sent during RUNNING/RECONNECT disconnects.
       payload:
-        $ref: '#/components/schemas/GameStateUpdatePayload'
+        $ref: '#/components/schemas/PlayerLeftPayload'
 
+    EvtStartReadyChanged:
+      name: EvtStartReadyChanged
+      title: Start Ready Changed
+      summary: |
+        One player clicked Start; shows who is ready so far.
+        Sent in WAITING state and between rounds (RUNNING, after a round ends).
+      payload:
+        $ref: '#/components/schemas/StartReadyChangedPayload'
+
+    EvtContinueVoteChanged:
+      name: EvtContinueVoteChanged
+      title: Continue Vote Changed
+      summary: One player voted to continue the match (ENDED state).
+      payload:
+        $ref: '#/components/schemas/ContinueVoteChangedPayload'
+
+    EvtMatchRestarted:
+      name: EvtMatchRestarted
+      title: Match Restarted
+      summary: Both players voted continue; room returns to WAITING for a new match.
+      payload:
+        $ref: '#/components/schemas/MatchRestartedPayload'
+
+    EvtMatchEnded:
+      name: EvtMatchEnded
+      title: Match Ended
+      summary: The entire match is over (round limit reached or a player reached 0 points).
+      payload:
+        $ref: '#/components/schemas/MatchEndedPayload'
+
+    EvtReconnectTimeout:
+      name: EvtReconnectTimeout
+      title: Reconnect Timeout
+      summary: A disconnected player failed to reconnect within 120 s; online player wins.
+      payload:
+        $ref: '#/components/schemas/ReconnectTimeoutPayload'
+
+    EvtRoomExpired:
+      name: EvtRoomExpired
+      title: Room Expired
+      summary: Room reached its 40-minute lifetime limit and is being destroyed.
+      payload:
+        $ref: '#/components/schemas/RoomExpiredPayload'
+
+    EvtRoomClosed:
+      name: EvtRoomClosed
+      title: Room Closed
+      summary: Room is being destroyed for a non-expiry reason (e.g. a player called end_game).
+      payload:
+        $ref: '#/components/schemas/RoomClosedPayload'
+
+    # ── Server → Client: spectator broadcast events ───────────────────────────
+
+    EvtSpectatorJoined:
+      name: EvtSpectatorJoined
+      title: Spectator Joined
+      summary: |
+        A spectator joined the room. Sent to all players and spectators.
+      payload:
+        $ref: '#/components/schemas/SpectatorJoinedPayload'
+
+    EvtSpectatorLeft:
+      name: EvtSpectatorLeft
+      title: Spectator Left
+      summary: |
+        A spectator disconnected from the room. Sent to all players and spectators.
+      payload:
+        $ref: '#/components/schemas/SpectatorLeftPayload'
+
+    # ── Server → Client: spectator unicast events ─────────────────────────────
+
+    EvtSpectatorSnapshot:
+      name: EvtSpectatorSnapshot
+      title: Spectator Snapshot
+      summary: |
+        Full omniscient game state sent to a spectator when they join.
+        Both players' hands are fully revealed. Sent only when the game is RUNNING.
+        If the game is not yet started, a plain waiting message is sent instead.
+      payload:
+        $ref: '#/components/schemas/SpectatorSnapshotPayload'
+
+    EvtSpectatorGameUpdate:
+      name: EvtSpectatorGameUpdate
+      title: Spectator Game Update
+      summary: |
+        Omniscient game state pushed to all spectators after each game action.
+        Same schema as `spectator_snapshot` but with event name `spectator_game_update`.
+      payload:
+        $ref: '#/components/schemas/SpectatorSnapshotPayload'
+
+    # ── Server → Client: unicast events (broadcast=false) ─────────────────────
+
+    EvtRoomCreated:
+      name: EvtRoomCreated
+      title: Room Created
+      summary: Sent only to the first player upon successfully creating a new room.
+      payload:
+        $ref: '#/components/schemas/RoomCreatedPayload'
+
+    EvtOpponentDisconnected:
+      name: EvtOpponentDisconnected
+      title: Opponent Disconnected
+      summary: Opponent dropped during RUNNING; game is now paused waiting for reconnect.
+      payload:
+        $ref: '#/components/schemas/OpponentDisconnectedPayload'
+
+    EvtOpponentReconnected:
+      name: EvtOpponentReconnected
+      title: Opponent Reconnected
+      summary: Opponent successfully reconnected; game resumes.
+      payload:
+        $ref: '#/components/schemas/OpponentReconnectedPayload'
+
+    EvtError:
+      name: EvtError
+      title: Error
+      summary: A requested action was rejected.
+      payload:
+        $ref: '#/components/schemas/ErrorPayload'
+
+    EvtGameStarted:
+      name: EvtGameStarted
+      title: Game Started
+      summary: |
+        Sent to each player individually when a round begins (first round or subsequent).
+        Contains that player's private hand plus shared state.
+      payload:
+        $ref: '#/components/schemas/GameStartedPayload'
+
+    EvtGameSnapshot:
+      name: EvtGameSnapshot
+      title: Game Snapshot
+      summary: |
+        Full game state snapshot pushed to a reconnecting player so they can resume.
+        Contains the viewer's private hand and obfuscated opponent data.
+      payload:
+        $ref: '#/components/schemas/GameSnapshotPayload'
+
+    GameActionResponse:
+      name: GameActionResponse
+      title: Game Action Response
+      summary: |
+        Per-player response sent after each in-game action (draw, discard, riichi,
+        kan, tsumo, ron, skip_ron). Contains the shared board state plus any
+        private data relevant to the recipient.
+      payload:
+        $ref: '#/components/schemas/GameActionResponsePayload'
+
+  # ────────────────────────────────────────────────────────────────────────────
   schemas:
+  # ────────────────────────────────────────────────────────────────────────────
 
     # ── Client → Server ────────────────────────────────────────────────────────
 
     ClientActionPayload:
       type: object
-      required:
-        - action
-        - card_idx
+      required: [action, card_idx]
       properties:
         action:
           $ref: '#/components/schemas/ActionType'
@@ -121,30 +432,42 @@ components:
           type: string
           description: |
             Numeric string index into the player's hand, or empty string when
-            no card is needed. For `start`/`start_new`, a value > 100 activates
-            debug mode with a preset wall.
+            no card is needed. For `start`/`start_new` during a round restart,
+            a value > 100 activates debug mode with a preset wall.
           example: '3'
 
     ActionType:
       type: string
       description: |
-        All supported player actions. Game phase and turn restrictions apply
-        (see channel description and README for state-machine details).
+        All supported player actions. State and turn restrictions apply.
 
-        | Action      | Phase         | Who          | Notes |
+        **Game actions** (RUNNING, correct turn/phase only):
+        | Action      | Phase         | Actor        | Notes |
         |-------------|---------------|--------------|-------|
-        | start       | WAITING       | any          | Assigns dealer; deals hands |
-        | start_new   | WAITING/ENDED | any          | Random dealer; resets state |
         | draw        | BEFORE_DRAW   | current      | Dealer skips first draw |
         | discard     | AFTER_DRAW    | current      | `card_idx` = hand index |
         | riichi      | AFTER_DRAW    | current      | `card_idx` = discard index |
-        | kan         | AFTER_DRAW    | current      | `card_idx` = tile to kan; draws from rinshan |
+        | kan         | AFTER_DRAW    | current      | Draws from rinshan wall |
         | tsumo       | AFTER_DRAW    | current      | Self-draw win |
         | ron         | AFTER_DISCARD | opponent     | Win on opponent's discard |
         | skip_ron    | AFTER_DISCARD | opponent     | Pass on ron opportunity |
+
+        **Room actions** (handled before the game layer):
+        | Action        | State(s)        | Notes |
+        |---------------|-----------------|-------|
+        | start         | WAITING         | Vote to start; game begins when both players send it |
+        | start_new     | RUNNING (ended round) | Vote to start next round |
+        | cancel_start  | WAITING         | Withdraw start vote |
+        | continue_game | ENDED           | Vote to play a new match |
+        | end_game      | ENDED           | Vote to end the match and destroy the room |
+        | leave_room    | any             | Close own connection and leave |
       enum:
         - start
         - start_new
+        - cancel_start
+        - continue_game
+        - end_game
+        - leave_room
         - draw
         - discard
         - riichi
@@ -153,152 +476,710 @@ components:
         - ron
         - skip_ron
 
-    # ── Server → Client ────────────────────────────────────────────────────────
+    # ── Broadcast event payloads ───────────────────────────────────────────────
 
-    BroadcastPayload:
+    PlayerJoinedPayload:
       type: object
-      required:
-        - broadcast
-        - message
+      required: [broadcast, event, display_name, room_name, player_count]
       properties:
         broadcast:
           type: boolean
           enum: [true]
-          description: Always `true` for broadcast messages.
-        message:
+        event:
           type: string
-          description: Human-readable event description.
-          example: 'alice joins room1. Game START!'
+          enum: [player_joined]
+        display_name:
+          type: string
+          description: Display name of the player who joined.
+          example: 'Alice'
+        room_name:
+          type: string
+          example: 'room1'
+        player_count:
+          type: integer
+          description: Total players now in the room (1 or 2).
+          example: 2
 
-    GameStateUpdatePayload:
+    PlayerLeftPayload:
       type: object
-      required:
-        - broadcast
-        - player_id
-        - action
-        - message
+      required: [broadcast, event, display_name, room_name, player_count]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [player_left]
+        display_name:
+          type: string
+        room_name:
+          type: string
+        player_count:
+          type: integer
+          description: Players remaining after the departure.
+          example: 1
+
+    StartReadyChangedPayload:
+      type: object
+      required: [broadcast, event, ready_user_ids, all_ready]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [start_ready_changed]
+        ready_user_ids:
+          type: array
+          items:
+            type: string
+          description: UUIDs of players who have sent start so far.
+        all_ready:
+          type: boolean
+          description: True only when both players are ready (game is about to start).
+
+    ContinueVoteChangedPayload:
+      type: object
+      required: [broadcast, event, continue_user_ids, all_continue]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [continue_vote_changed]
+        continue_user_ids:
+          type: array
+          items:
+            type: string
+          description: UUIDs of players who voted continue.
+        all_continue:
+          type: boolean
+
+    MatchRestartedPayload:
+      type: object
+      required: [broadcast, event, room_status]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [match_restarted]
+        room_status:
+          type: string
+          enum: [waiting]
+          description: Room has returned to WAITING for a fresh match.
+
+    MatchEndedPayload:
+      type: object
+      required: [broadcast, event, reason, final_scores]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [match_ended]
+        reason:
+          type: string
+          description: Why the match ended.
+          enum:
+            - round_limit_reached
+            - point_zero
+          example: 'round_limit_reached'
+        final_scores:
+          type: object
+          description: Final point totals keyed by player UUID.
+          additionalProperties:
+            type: integer
+          example:
+            'uuid-alice': 200000
+            'uuid-bob': 100000
+
+    ReconnectTimeoutPayload:
+      type: object
+      required: [broadcast, event, winner_id, loser_id]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [reconnect_timeout]
+        winner_id:
+          type: string
+          description: UUID of the player who stayed online.
+        loser_id:
+          type: string
+          description: UUID of the player who timed out.
+
+    RoomExpiredPayload:
+      type: object
+      required: [broadcast, event, room_name]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [room_expired]
+        room_name:
+          type: string
+
+    RoomClosedPayload:
+      type: object
+      required: [broadcast, event, reason]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [room_closed]
+        reason:
+          type: string
+          description: Reason the room is closing.
+          example: 'player_end_game'
+
+    # ── Unicast event payloads ─────────────────────────────────────────────────
+
+    RoomCreatedPayload:
+      type: object
+      required: [broadcast, event, room_name, user_id, display_name, is_owner]
       properties:
         broadcast:
           type: boolean
           enum: [false]
-          description: Always `false` for targeted updates.
+        event:
+          type: string
+          enum: [room_created]
+        room_name:
+          type: string
+        user_id:
+          type: string
+          description: JWT-derived UUID of the room creator.
+        display_name:
+          type: string
+        is_owner:
+          type: boolean
+          enum: [true]
+
+    OpponentDisconnectedPayload:
+      type: object
+      required: [broadcast, event]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
+        event:
+          type: string
+          enum: [opponent_disconnected]
+
+    OpponentReconnectedPayload:
+      type: object
+      required: [broadcast, event]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
+        event:
+          type: string
+          enum: [opponent_reconnected]
+
+    ErrorPayload:
+      type: object
+      required: [broadcast, event, code, message]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
+        event:
+          type: string
+          enum: [error]
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          description: Human-readable description of the error.
+
+    # ── Game event payloads ────────────────────────────────────────────────────
+
+    GameStartedPayload:
+      type: object
+      required:
+        - broadcast
+        - event
+        - action
+        - message
+        - hand
+        - is_oya
+        - wall_count
+        - round_no
+        - round_limit
+        - balances
+        - fuuro
+        - kawa
+        - player_id
+      description: |
+        Sent privately to each player at the start of every round.
+        `hand` is this player's private dealt tiles (14 for dealer, 13 for non-dealer).
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
+        event:
+          type: string
+          enum: [game_started]
+        action:
+          type: string
+          enum: [start]
+        message:
+          type: string
+          enum: [ok]
+        hand:
+          type: array
+          items:
+            type: string
+          description: This player's private hand.
+          example: ['1s','2s','3s','4s','5s','6s','7s','8s','9s','1s','2s','3s','4s']
+        is_oya:
+          type: boolean
+          description: Whether this player is the dealer for this round.
+        wall_count:
+          type: integer
+          description: Tiles remaining in the wall after the deal.
+        round_no:
+          type: integer
+          description: Number of rounds completed so far (0-based before this round).
+        round_limit:
+          type: integer
+          description: Total rounds in this match (default 8).
+        balances:
+          $ref: '#/components/schemas/Balances'
+        fuuro:
+          $ref: '#/components/schemas/FuuroMap'
+        kawa:
+          $ref: '#/components/schemas/KawaMap'
         player_id:
           type: string
-          description: The player this message is addressed to.
+          description: UUID of the recipient (mirrors the JWT UUID).
+
+    GameSnapshotPayload:
+      type: object
+      required:
+        - broadcast
+        - event
+        - game_status
+        - turn_stage
+        - current_player
+        - opponent_id
+        - turn_number
+        - round_no
+        - round_limit
+        - wall_count
+        - kyoutaku_number
+        - tsumi_number
+        - me
+        - opponent
+      description: |
+        Full state snapshot sent to a player reconnecting mid-game (RUNNING or ENDED).
+        `current_player` is the UUID of the player who should act next.
+        Convention: in `after_discard` phase this is the player who *can ron/skip*
+        (i.e. the opponent of the discarder), not the discarder.
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
+        event:
+          type: string
+          enum: [game_snapshot]
+        game_status:
+          type: string
+          description: Game engine status at snapshot time.
+          enum: [waiting, running, reconnect, ended]
+        turn_stage:
+          type: string
+          enum: [before_draw, after_draw, after_discard]
+        current_player:
+          type: string
+          description: UUID of the player whose turn it is (see convention above).
+        opponent_id:
+          type: string
+          description: UUID of the opponent.
+        turn_number:
+          type: integer
+          description: Internal turn counter since this round started.
+        round_no:
+          type: integer
+        round_limit:
+          type: integer
+        wall_count:
+          type: integer
+        kyoutaku_number:
+          type: integer
+          description: Riichi sticks on the table (kyoutaku).
+        tsumi_number:
+          type: integer
+          description: Honba counter (accumulated draws / consecutive dealer wins).
+        me:
+          $ref: '#/components/schemas/SnapshotPlayerView'
+        opponent:
+          $ref: '#/components/schemas/SnapshotOpponentView'
+
+    SnapshotPlayerView:
+      type: object
+      description: Full private data for the receiving player.
+      required: [hand, fuuro, kawa, point, is_oya, is_riichi]
+      properties:
+        hand:
+          type: array
+          items:
+            type: string
+        fuuro:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+        kawa:
+          type: array
+          items:
+            type: array
+            prefixItems:
+              - type: string
+              - type: boolean
+        point:
+          type: integer
+        is_oya:
+          type: boolean
+        is_riichi:
+          type: boolean
+
+    SnapshotOpponentView:
+      type: object
+      description: Obfuscated opponent data (hand hidden, only tile count visible).
+      required: [display_name, hand_count, fuuro, kawa, point, is_oya, is_riichi]
+      properties:
+        display_name:
+          type: string
+        hand_count:
+          type: integer
+          description: Number of tiles in the opponent's hand (private tiles hidden).
+        fuuro:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+        kawa:
+          type: array
+          items:
+            type: array
+            prefixItems:
+              - type: string
+              - type: boolean
+        point:
+          type: integer
+        is_oya:
+          type: boolean
+        is_riichi:
+          type: boolean
+
+    GameActionResponsePayload:
+      type: object
+      required: [broadcast, action, message, fuuro, kawa, balances, wall_count]
+      description: |
+        Sent privately to each player after every in-game action.
+        Fields marked optional are only present for specific actions.
+
+        | Field        | Present when |
+        |--------------|-------------|
+        | hand         | Actor's private hand updated (draw / discard / riichi / kan) |
+        | is_oya       | start action only |
+        | card_idx     | draw / discard / riichi / kan |
+        | card         | draw / discard / riichi / kan |
+        | agari        | tsumo or ron that results in a win |
+        | han / fu / point / yaku | agari=true |
+        | ryukyoku     | Exhaustive draw (wall empty, no win) |
+        | tenpai       | ryukyoku=true — who was in tenpai |
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
         action:
           $ref: '#/components/schemas/ActionType'
         message:
           type: string
-          description: |
-            `"ok"` on success, or an error code on failure.
-          oneOf:
-            - type: string
-              enum: ['ok']
-            - $ref: '#/components/schemas/ErrorCode'
-        card_idx:
-          type: integer
-          description: Index of the card involved in the action.
-        card:
+          description: '`ok` on success, or an error code string on failure.'
+          example: 'ok'
+        player_id:
           type: string
-          description: Tile identifier involved in the action (e.g. "5s").
-          example: '5s'
-        hand:
-          type: array
-          description: The receiving player's full hand after the action.
-          items:
-            type: string
-          example: ['1s', '2s', '3s', '4s', '5s']
-        is_oya:
-          type: boolean
-          description: Whether the receiving player is the dealer.
-        current_player:
-          type: string
-          description: Player ID whose turn it is.
-        turn_stage:
-          type: string
-          description: Current phase of the turn.
-          enum:
-            - before_draw
-            - after_draw
-            - after_discard
+          description: UUID of the player who performed the action.
         wall_count:
           type: integer
-          description: Tiles remaining in the wall.
-        kyoutaku_number:
-          type: integer
-          description: Riichi sticks on the table (kyoutaku).
+        balances:
+          $ref: '#/components/schemas/Balances'
         fuuro:
-          type: object
-          description: Each player's declared kan sets, keyed by player_id.
-          additionalProperties:
-            type: array
-            items:
-              type: array
-              items:
-                type: string
-          example:
-            alice: [['1s', '1s', '1s', '1s']]
-            bob: []
+          $ref: '#/components/schemas/FuuroMap'
         kawa:
-          type: object
-          description: |
-            Each player's discard pile, keyed by player_id.
-            Each entry is `[tile, is_riichi_discard]`.
-          additionalProperties:
-            type: array
-            items:
-              type: array
-              prefixItems:
-                - type: string
-                - type: boolean
-          example:
-            alice: [['5s', false], ['3s', true]]
-            bob: [['7s', false]]
-        point:
-          type: object
-          description: Current scores, keyed by player_id.
-          additionalProperties:
-            type: integer
-          example:
-            alice: 150000
-            bob: 150000
-        # Win result fields — only present when agari is true
+          $ref: '#/components/schemas/KawaMap'
+        hand:
+          type: array
+          description: Updated private hand of the receiving player.
+          items:
+            type: string
+        is_oya:
+          type: boolean
+        card_idx:
+          type: integer
+          description: Index of the tile involved in the action.
+        card:
+          type: string
+          description: Tile identifier (e.g. `"5s"`).
+          example: '5s'
         agari:
           type: boolean
-          description: Present and `true` when a winning hand was declared.
+          description: Present and true when a winning hand was declared.
         han:
           type: integer
-          description: Han count of the winning hand.
         fu:
           type: integer
-          description: Fu count of the winning hand.
+        point:
+          type: integer
+          description: Point transaction amount (positive = gain, negative = loss).
         yaku:
           type: array
-          description: Yaku (winning conditions) achieved.
           items:
             type: string
           example: ['Chinitsu', 'Riichi']
+        ryukyoku:
+          type: boolean
+          description: Present and true on exhaustive draw (wall depleted, no winner).
+        tenpai:
+          type: object
+          description: Tenpai status for each player at ryukyoku.
+          additionalProperties:
+            type: object
+            required: [is_tenpai, hand]
+            properties:
+              is_tenpai:
+                type: boolean
+              hand:
+                type: array
+                items:
+                  type: string
+                description: Player's hand if in tenpai, empty array otherwise.
+
+    # ── Shared sub-schemas ─────────────────────────────────────────────────────
+
+    Balances:
+      type: object
+      description: Current point totals for all players, keyed by UUID.
+      additionalProperties:
+        type: integer
+      example:
+        'uuid-alice': 150000
+        'uuid-bob': 150000
+
+    FuuroMap:
+      type: object
+      description: Each player's declared melds (kan sets), keyed by UUID.
+      additionalProperties:
+        type: array
+        items:
+          type: array
+          items:
+            type: string
+      example:
+        'uuid-alice': [['1s', '1s', '1s', '1s']]
+        'uuid-bob': []
+
+    KawaMap:
+      type: object
+      description: |
+        Each player's discard pile, keyed by UUID.
+        Each entry is `[tile_id, is_riichi_discard]`.
+      additionalProperties:
+        type: array
+        items:
+          type: array
+          prefixItems:
+            - type: string
+            - type: boolean
+      example:
+        'uuid-alice': [['5s', false], ['3s', true]]
+        'uuid-bob': [['7s', false]]
+
+    # ── Spectator schemas ──────────────────────────────────────────────────────
+
+    SpectatorJoinedPayload:
+      type: object
+      required: [broadcast, event, display_name, spectator_count]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [spectator_joined]
+        display_name:
+          type: string
+          description: Display name of the spectator who joined.
+          example: 'Charlie'
+        spectator_count:
+          type: integer
+          description: Total spectators now watching the room.
+          example: 1
+
+    SpectatorLeftPayload:
+      type: object
+      required: [broadcast, event, display_name, spectator_count]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [spectator_left]
+        display_name:
+          type: string
+          description: Display name of the spectator who left.
+        spectator_count:
+          type: integer
+          description: Spectators remaining after the departure.
+          example: 0
+
+    SpectatorSnapshotPayload:
+      type: object
+      required:
+        - broadcast
+        - event
+        - game_status
+        - turn_stage
+        - current_player
+        - wall_count
+        - round_no
+        - round_limit
+        - kyoutaku_number
+        - spectator_count
+        - players
+      description: |
+        Omniscient view of the game state sent to spectators.
+        All players' hands are fully visible.
+        `current_player` follows the same after_discard convention as the player snapshot.
+        Used for both `spectator_snapshot` (join) and `spectator_game_update` (after action).
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
+        event:
+          type: string
+          enum: [spectator_snapshot, spectator_game_update]
+        game_status:
+          type: string
+          enum: [waiting, running, reconnect, ended]
+        turn_stage:
+          type: string
+          nullable: true
+          enum: [before_draw, after_draw, after_discard]
+        current_player:
+          type: string
+          nullable: true
+          description: UUID of the player whose turn it is.
+        wall_count:
+          type: integer
+        round_no:
+          type: integer
+          description: 0-based completed round count.
+        round_limit:
+          type: integer
+        kyoutaku_number:
+          type: integer
+          description: Riichi sticks on the table.
+        spectator_count:
+          type: integer
+          description: Number of spectators currently watching.
+        players:
+          type: object
+          description: Full data for every player, keyed by UUID.
+          additionalProperties:
+            $ref: '#/components/schemas/SpectatorPlayerView'
+
+    SpectatorPlayerView:
+      type: object
+      description: Full (omniscient) data for a single player as seen by a spectator.
+      required: [display_name, hand, fuuro, kawa, point, is_oya, is_riichi, num_kan]
+      properties:
+        display_name:
+          type: string
+        hand:
+          type: array
+          items:
+            type: string
+          description: Full revealed hand tiles.
+        fuuro:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+          description: Declared melds (kan sets).
+        kawa:
+          type: array
+          items:
+            type: array
+            prefixItems:
+              - type: string
+              - type: boolean
+          description: Discard pile; each entry is `[tile_id, is_riichi_discard]`.
+        point:
+          type: integer
+        is_oya:
+          type: boolean
+        is_riichi:
+          type: boolean
+        num_kan:
+          type: integer
+          description: Number of kans declared by this player.
+
+    # ── Error codes ────────────────────────────────────────────────────────────
 
     ErrorCode:
       type: string
       description: |
-        Returned in the `message` field when an action is invalid.
+        Returned in the `code` field of an `error` event when an action is rejected.
 
-        | Code                 | Cause |
-        |----------------------|-------|
-        | not_your_turn        | Action attempted outside your turn |
-        | not_opponent_turn    | ron/skip_ron attempted on your own turn |
-        | card_index_error     | Invalid or out-of-range card index |
-        | illegal_draw         | Draw attempted in wrong phase or by dealer on first turn |
-        | illegal_kan          | Kan attempted in wrong phase or insufficient tiles |
-        | illegal_discard      | Discard attempted in wrong phase |
-        | illegal_riichi       | Riichi attempted in wrong phase or already in riichi |
-        | illegal_tsumo        | Tsumo attempted in wrong phase |
-        | illegal_ron          | Ron attempted in wrong phase |
-        | room_full            | Room already has 2 players (also sent as WS close code 1003) |
-        | duplicate_id         | player_id already taken in this room (also WS close 1003) |
-        | not_enough_players   | Start attempted with fewer than 2 players |
+        **Room-layer errors:**
+        | Code                        | Cause |
+        |-----------------------------|-------|
+        | game_not_started            | Game action sent while in WAITING state |
+        | game_paused                 | Game action sent while in RECONNECT state |
+        | game_ended                  | Invalid action sent while in ENDED state |
+        | round_not_ended             | `start_new` sent before the current round finished |
+        | not_enough_players          | `start` sent with fewer than 2 online players |
+        | unknown_action              | Unrecognised action string |
+        | spectator_action_forbidden  | Any action sent by a spectator (spectators are read-only) |
+
+        **Game-layer errors** (turn / phase enforcement):
+        | Code              | Cause |
+        |-------------------|-------|
+        | not_your_turn     | Action attempted outside your turn |
+        | not_opponent_turn | `ron`/`skip_ron` attempted on your own turn |
+        | card_index_error  | `card_idx` missing, non-numeric, or out of range |
+        | illegal_draw      | Draw in wrong phase, or dealer on first turn |
+        | illegal_kan       | Kan in wrong phase or insufficient tiles |
+        | illegal_discard   | Discard in wrong phase |
+        | illegal_riichi    | Riichi in wrong phase or already in riichi |
+        | illegal_tsumo     | Tsumo in wrong phase |
+        | illegal_ron       | Ron in wrong phase |
       enum:
+        - game_not_started
+        - game_paused
+        - game_ended
+        - round_not_ended
+        - not_enough_players
+        - unknown_action
         - not_your_turn
         - not_opponent_turn
         - card_index_error
@@ -308,6 +1189,4 @@ components:
         - illegal_riichi
         - illegal_tsumo
         - illegal_ron
-        - room_full
-        - duplicate_id
-        - not_enough_players
+        - spectator_action_forbidden

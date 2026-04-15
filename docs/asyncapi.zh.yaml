@@ -1,65 +1,86 @@
 asyncapi: '2.6.0'
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 清一色对战 — AsyncAPI 规范（中文版）
+# 清一色对战 — AsyncAPI 规范（中文版，v2）
 #
 # 如何维护此文件
 # ──────────────────────────────────────────────────────────────────────────────
-# • 本文件是 WebSocket（及未来 HTTP）API 的唯一中文参考文档。
-# • 新增 WebSocket 动作时：
-#     1. 在 components/schemas/ActionType/enum 中添加动作名称
-#     2. 若载荷结构不同，在 components/messages/ 中添加对应消息定义
-#     3. 在 channel 的 publish/subscribe oneOf 列表中引用新消息
-# • 新增 HTTP 接口时，以 http binding 格式添加新 channel。
-# • 验证规范：在线访问 https://studio.asyncapi.com 粘贴 YAML 进行校验，
-#   或运行：npx @asyncapi/cli validate docs/asyncapi.zh.yaml
+# • 本文件是英文版 asyncapi.yaml 的中文对照，结构必须与英文版保持完全一致。
+# • 新增 WebSocket 动作 → 在 ActionType/enum 中添加；若载荷不同则添加消息定义。
+# • 新增广播事件 → 在 BroadcastEventType/enum 中添加；补充载荷 schema。
+# • 新增单播事件 → 在 UnicastEventType/enum 中添加；补充载荷 schema。
+# • 新增 HTTP 接口 → 以 http binding 格式添加新 channel。
+# • 新增错误码 → 在 ErrorCode/enum 中添加。
+# • 新增 WS 关闭原因 → 更新 WsCloseReason/enum 及 channel 描述中的表格。
+# • 验证：npx @asyncapi/cli validate docs/asyncapi.zh.yaml
 # ──────────────────────────────────────────────────────────────────────────────
 
 info:
   title: 清一色对战 API
-  version: '1.0.0'
+  version: '2.0.0'
   description: |
     两人实时清一色麻将对战游戏。
 
     所有游戏通信通过每位玩家的单条 WebSocket 连接进行。
-    连接至 `/ws/{room_name}/{player_id}`，发送 JSON 动作消息，
-    并接收 JSON 游戏状态更新。
+    玩家身份通过 `?token=` 查询参数传入的 JWT 标识。
+    HTTP 接口负责账号注册、登录和会话查询。
 
 servers:
   本地开发:
     url: 'localhost:8000'
     protocol: ws
-    description: 本地开发服务器
+    description: 本地开发服务器（WebSocket 与 HTTP 共用同一端口）
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 频道
+# ──────────────────────────────────────────────────────────────────────────────
 
 channels:
-  /ws/{room_name}/{player_id}:
+
+  # ── WebSocket 游戏频道 ────────────────────────────────────────────────────
+  /ws/{room_name}:
     description: |
       主游戏频道，每位玩家在每个房间持有一条连接。
+      玩家身份（UUID + 昵称）从 `?token=` 中的 JWT 解析。
 
-      **连接生命周期：**
-      - 第一位玩家连接时创建房间（游戏进入 WAITING 状态）。
-      - 第二位玩家连接后触发 RUNNING 状态。
-      - RUNNING 状态下断线，游戏进入 RECONNECT 状态；以相同 player_id 重新加入同一房间可恢复对局。
-      - 房间内所有玩家离开后，房间自动销毁。
+      **房间生命周期：**
+      | 状态       | 说明 |
+      |------------|------|
+      | WAITING    | 房间已创建；等待双方点击开始 |
+      | RUNNING    | 对局进行中（多轮制） |
+      | RECONNECT  | 一方断线；120 秒内重连否则判负 |
+      | ENDED      | 全部轮次结束或某方点数归零 |
+
+      **断线重连机制：**
+      - RUNNING 状态断线 → 房间进入 RECONNECT，快照保存至 Redis。
+      - 玩家以相同 JWT 重连同一 `room_name` → 推送快照，恢复游戏。
+      - 双人 WAITING/ENDED 状态断线 → 会话保留，重连回同一路径。
+      - 双方同时离线 → 房间立即销毁。
+
+      **一人一房间策略：**
+      玩家同一时间只能加入一个房间。已有活跃会话时尝试加入其他房间将被拒绝
+      （关闭码 1003 / `already_in_room`）。
 
       **WebSocket 关闭码：**
-      | 关闭码 | 原因 |
-      |--------|------|
-      | 1003 | `room_full` — 房间已有 2 名玩家 |
-      | 1003 | `duplicate_id` — 该 player_id 已在房间内使用 |
+      | 关闭码 | 原因 | 触发场景 |
+      |--------|------|---------|
+      | 1001 | `room_expired` | 房间 40 分钟寿命到期 |
+      | 1001 | `room_closed` | 房间销毁（end_game / 双方断线）|
+      | 1003 | `room_full` | 房间已有 2 名活跃玩家 |
+      | 1003 | `spectator_room_full` | 旁观者人数已达上限（10 人）|
+      | 1003 | `duplicate_id` | 该玩家已在线 |
+      | 1003 | `invalid_room_name` | 房间名为空或超过 20 字符 |
+      | 1003 | `already_in_room` | 玩家在另一个房间中已有活跃会话 |
+      | 1008 | `invalid_token` | JWT 缺失、过期或无效 |
+
     parameters:
       room_name:
-        description: 房间标识（最长 20 字符）
+        description: 房间标识（1–20 字符，URL 安全）
         schema:
           type: string
+          minLength: 1
           maxLength: 20
           example: 'room1'
-      player_id:
-        description: 玩家标识，在同一房间内唯一（最长 20 字符）
-        schema:
-          type: string
-          maxLength: 20
-          example: 'alice'
 
     # 客户端 → 服务端
     publish:
@@ -74,44 +95,335 @@ channels:
       operationId: receiveEvent
       message:
         oneOf:
-          - $ref: '#/components/messages/BroadcastMessage'
-          - $ref: '#/components/messages/GameStateUpdate'
+          # — 房间生命周期（广播）—
+          - $ref: '#/components/messages/EvtPlayerJoined'
+          - $ref: '#/components/messages/EvtPlayerLeft'
+          - $ref: '#/components/messages/EvtStartReadyChanged'
+          - $ref: '#/components/messages/EvtContinueVoteChanged'
+          - $ref: '#/components/messages/EvtMatchRestarted'
+          - $ref: '#/components/messages/EvtMatchEnded'
+          - $ref: '#/components/messages/EvtReconnectTimeout'
+          - $ref: '#/components/messages/EvtRoomExpired'
+          - $ref: '#/components/messages/EvtRoomClosed'
+          # — 旁观者（广播给全员）—
+          - $ref: '#/components/messages/EvtSpectatorJoined'
+          - $ref: '#/components/messages/EvtSpectatorLeft'
+          # — 连接（单播）—
+          - $ref: '#/components/messages/EvtRoomCreated'
+          - $ref: '#/components/messages/EvtOpponentDisconnected'
+          - $ref: '#/components/messages/EvtOpponentReconnected'
+          - $ref: '#/components/messages/EvtError'
+          # — 游戏（单播）—
+          - $ref: '#/components/messages/EvtGameStarted'
+          - $ref: '#/components/messages/EvtGameSnapshot'
+          - $ref: '#/components/messages/GameActionResponse'
+          # — 旁观者视图（单播给旁观者）—
+          - $ref: '#/components/messages/EvtSpectatorSnapshot'
+          - $ref: '#/components/messages/EvtSpectatorGameUpdate'
+
+  # ── HTTP：注册 ──────────────────────────────────────────────────────────────
+  /api/register:
+    description: 创建新账号并获取 JWT。
+    bindings:
+      http:
+        type: request
+        method: POST
+    publish:
+      operationId: register
+      message:
+        $ref: '#/components/messages/RegisterRequest'
+    subscribe:
+      operationId: registerResponse
+      message:
+        $ref: '#/components/messages/AuthResponse'
+
+  # ── HTTP：登录 ──────────────────────────────────────────────────────────────
+  /api/login:
+    description: 账号认证并获取 JWT。
+    bindings:
+      http:
+        type: request
+        method: POST
+    publish:
+      operationId: login
+      message:
+        $ref: '#/components/messages/LoginRequest'
+    subscribe:
+      operationId: loginResponse
+      message:
+        $ref: '#/components/messages/AuthResponse'
+
+  # ── HTTP：查询活跃房间 ──────────────────────────────────────────────────────
+  /api/active_room:
+    description: |
+      返回已认证玩家当前所在的房间。
+      前端在页面加载时调用，用于自动重连。
+      需要请求头 `Authorization: Bearer {token}`。
+      玩家不在任何房间时返回 `room_name: null`。
+    bindings:
+      http:
+        type: request
+        method: GET
+    subscribe:
+      operationId: getActiveRoom
+      message:
+        $ref: '#/components/messages/ActiveRoomResponse'
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 组件
+# ──────────────────────────────────────────────────────────────────────────────
 
 components:
   messages:
 
+    # ── 客户端 → 服务端 ────────────────────────────────────────────────────────
+
     ClientAction:
       name: ClientAction
       title: 客户端动作
-      summary: 玩家发送的 JSON 消息，用于执行游戏操作。
+      summary: 玩家发送的 JSON 动作消息。
       payload:
         $ref: '#/components/schemas/ClientActionPayload'
 
-    BroadcastMessage:
-      name: BroadcastMessage
-      title: 广播消息
-      summary: 发送给房间内所有玩家的通知消息（如加入/离开事件）。
-      payload:
-        $ref: '#/components/schemas/BroadcastPayload'
+    # ── HTTP 请求 / 响应 ────────────────────────────────────────────────────────
 
-    GameStateUpdate:
-      name: GameStateUpdate
-      title: 游戏状态更新
+    RegisterRequest:
+      name: RegisterRequest
+      title: 注册请求
+      payload:
+        type: object
+        required: [username, password]
+        properties:
+          username:
+            type: string
+            example: 'alice'
+          password:
+            type: string
+            example: 'secret'
+
+    LoginRequest:
+      name: LoginRequest
+      title: 登录请求
+      payload:
+        type: object
+        required: [username, password]
+        properties:
+          username:
+            type: string
+          password:
+            type: string
+
+    AuthResponse:
+      name: AuthResponse
+      title: 认证响应
+      summary: /api/register 和 /api/login 成功时返回。
+      payload:
+        type: object
+        required: [access_token, uuid, username]
+        properties:
+          access_token:
+            type: string
+            description: JWT，用于 WebSocket 连接的 `?token=` 参数。
+          uuid:
+            type: string
+            description: 账号派生的稳定玩家 UUID。
+            example: '550e8400-e29b-41d4-a716-446655440000'
+          username:
+            type: string
+            example: 'alice'
+
+    ActiveRoomResponse:
+      name: ActiveRoomResponse
+      title: 活跃房间响应
+      payload:
+        type: object
+        required: [room_name]
+        properties:
+          room_name:
+            type: string
+            nullable: true
+            description: 玩家当前所在的房间名，不在任何房间时为 null。
+            example: 'room1'
+          room_status:
+            type: string
+            nullable: true
+            description: 当前房间状态（waiting / running / reconnect / ended）。
+            example: 'running'
+
+    # ── 服务端 → 客户端：广播事件（broadcast=true）───────────────────────────
+
+    EvtPlayerJoined:
+      name: EvtPlayerJoined
+      title: 玩家加入
+      summary: 有玩家加入房间，发送给房间内所有玩家。
+      payload:
+        $ref: '#/components/schemas/PlayerJoinedPayload'
+
+    EvtPlayerLeft:
+      name: EvtPlayerLeft
+      title: 玩家离开
       summary: |
-        每次动作后发送给特定玩家的私有游戏状态快照。
-        仅包含与当前动作相关的字段，并非每次更新都包含所有字段。
+        玩家离开房间（WAITING 状态下单人断线或主动离开）。
+        RUNNING/RECONNECT 状态断线时不发送此事件。
       payload:
-        $ref: '#/components/schemas/GameStateUpdatePayload'
+        $ref: '#/components/schemas/PlayerLeftPayload'
 
+    EvtStartReadyChanged:
+      name: EvtStartReadyChanged
+      title: 开始准备状态变更
+      summary: |
+        一名玩家点击了开始；显示当前已准备的玩家。
+        适用于 WAITING 状态及轮次间（RUNNING 状态某轮结束后）。
+      payload:
+        $ref: '#/components/schemas/StartReadyChangedPayload'
+
+    EvtContinueVoteChanged:
+      name: EvtContinueVoteChanged
+      title: 继续投票变更
+      summary: ENDED 状态下有玩家投票继续比赛。
+      payload:
+        $ref: '#/components/schemas/ContinueVoteChangedPayload'
+
+    EvtMatchRestarted:
+      name: EvtMatchRestarted
+      title: 比赛重新开始
+      summary: 双方均投票继续，房间回到 WAITING 状态，准备新一局比赛。
+      payload:
+        $ref: '#/components/schemas/MatchRestartedPayload'
+
+    EvtMatchEnded:
+      name: EvtMatchEnded
+      title: 比赛结束
+      summary: 整场比赛结束（轮数达到上限或某方点数归零）。
+      payload:
+        $ref: '#/components/schemas/MatchEndedPayload'
+
+    EvtReconnectTimeout:
+      name: EvtReconnectTimeout
+      title: 重连超时
+      summary: 断线玩家 120 秒内未重连，在线方判胜。
+      payload:
+        $ref: '#/components/schemas/ReconnectTimeoutPayload'
+
+    EvtRoomExpired:
+      name: EvtRoomExpired
+      title: 房间到期
+      summary: 房间达到 40 分钟寿命上限，即将销毁。
+      payload:
+        $ref: '#/components/schemas/RoomExpiredPayload'
+
+    EvtRoomClosed:
+      name: EvtRoomClosed
+      title: 房间关闭
+      summary: 房间因非到期原因销毁（如玩家调用 end_game）。
+      payload:
+        $ref: '#/components/schemas/RoomClosedPayload'
+
+    # ── 服务端 → 客户端：旁观者广播事件 ─────────────────────────────────────
+
+    EvtSpectatorJoined:
+      name: EvtSpectatorJoined
+      title: 旁观者加入
+      summary: |
+        有旁观者加入房间，发送给房间内所有玩家及旁观者。
+      payload:
+        $ref: '#/components/schemas/SpectatorJoinedPayload'
+
+    EvtSpectatorLeft:
+      name: EvtSpectatorLeft
+      title: 旁观者离开
+      summary: |
+        有旁观者断线，发送给房间内所有玩家及旁观者。
+      payload:
+        $ref: '#/components/schemas/SpectatorLeftPayload'
+
+    # ── 服务端 → 客户端：旁观者单播事件 ─────────────────────────────────────
+
+    EvtSpectatorSnapshot:
+      name: EvtSpectatorSnapshot
+      title: 旁观者快照
+      summary: |
+        旁观者加入时发送的全知视角游戏状态。
+        双方手牌完全可见。仅在游戏进行中（RUNNING）发送；
+        游戏未开始时发送普通等待消息。
+      payload:
+        $ref: '#/components/schemas/SpectatorSnapshotPayload'
+
+    EvtSpectatorGameUpdate:
+      name: EvtSpectatorGameUpdate
+      title: 旁观者游戏更新
+      summary: |
+        每次游戏动作后推送给所有旁观者的全知视角状态。
+        与 `spectator_snapshot` 使用相同 schema，事件名为 `spectator_game_update`。
+      payload:
+        $ref: '#/components/schemas/SpectatorSnapshotPayload'
+
+    # ── 服务端 → 客户端：单播事件（broadcast=false）─────────────────────────
+
+    EvtRoomCreated:
+      name: EvtRoomCreated
+      title: 房间创建成功
+      summary: 仅发送给成功创建新房间的第一位玩家。
+      payload:
+        $ref: '#/components/schemas/RoomCreatedPayload'
+
+    EvtOpponentDisconnected:
+      name: EvtOpponentDisconnected
+      title: 对手断线
+      summary: 对手在 RUNNING 中断线，游戏暂停，等待重连。
+      payload:
+        $ref: '#/components/schemas/OpponentDisconnectedPayload'
+
+    EvtOpponentReconnected:
+      name: EvtOpponentReconnected
+      title: 对手重连
+      summary: 对手成功重连，游戏恢复。
+      payload:
+        $ref: '#/components/schemas/OpponentReconnectedPayload'
+
+    EvtError:
+      name: EvtError
+      title: 错误
+      summary: 请求的动作被拒绝。
+      payload:
+        $ref: '#/components/schemas/ErrorPayload'
+
+    EvtGameStarted:
+      name: EvtGameStarted
+      title: 游戏开始
+      summary: |
+        每轮开始时分别私发给每位玩家。
+        包含该玩家的私有手牌及公共状态。
+      payload:
+        $ref: '#/components/schemas/GameStartedPayload'
+
+    EvtGameSnapshot:
+      name: EvtGameSnapshot
+      title: 游戏快照
+      summary: |
+        向重连玩家推送的完整游戏状态快照，用于恢复对局。
+        包含接收方的私有手牌和遮蔽后的对手数据。
+      payload:
+        $ref: '#/components/schemas/GameSnapshotPayload'
+
+    GameActionResponse:
+      name: GameActionResponse
+      title: 游戏动作响应
+      summary: |
+        每次游戏内动作（draw/discard/riichi/kan/tsumo/ron/skip_ron）后
+        分别私发给每位玩家，包含公共棋盘状态及接收方的私有数据。
+      payload:
+        $ref: '#/components/schemas/GameActionResponsePayload'
+
+  # ────────────────────────────────────────────────────────────────────────────
   schemas:
+  # ────────────────────────────────────────────────────────────────────────────
 
     # ── 客户端 → 服务端 ────────────────────────────────────────────────────────
 
     ClientActionPayload:
       type: object
-      required:
-        - action
-        - card_idx
+      required: [action, card_idx]
       properties:
         action:
           $ref: '#/components/schemas/ActionType'
@@ -119,29 +431,41 @@ components:
           type: string
           description: |
             手牌中牌的数字字符串索引，不需要指定牌时传空字符串。
-            在 `start`/`start_new` 中，值大于 100 时启用调试模式（预设牌山）。
+            在轮次间重启的 `start`/`start_new` 中，值大于 100 时启用调试模式（预设牌山）。
           example: '3'
 
     ActionType:
       type: string
       description: |
-        所有支持的玩家动作。各动作有游戏阶段和回合限制
-        （详见频道说明及 README 中的状态机说明）。
+        所有支持的玩家动作，各动作有状态和回合限制。
 
-        | 动作        | 阶段          | 操作方   | 说明 |
-        |-------------|---------------|---------|------|
-        | start       | WAITING       | 任意     | 分配庄家，发牌 |
-        | start_new   | WAITING/ENDED | 任意     | 随机庄家，重置状态 |
-        | draw        | BEFORE_DRAW   | 当前玩家 | 庄家第一巡跳过摸牌 |
-        | discard     | AFTER_DRAW    | 当前玩家 | `card_idx` = 手牌索引 |
-        | riichi      | AFTER_DRAW    | 当前玩家 | `card_idx` = 打出牌的索引 |
-        | kan         | AFTER_DRAW    | 当前玩家 | `card_idx` = 杠的牌索引，自动从岭上摸牌 |
-        | tsumo       | AFTER_DRAW    | 当前玩家 | 自摸和牌 |
-        | ron         | AFTER_DISCARD | 对手     | 荣和对手打出的牌 |
-        | skip_ron    | AFTER_DISCARD | 对手     | 放弃荣和机会 |
+        **游戏动作**（RUNNING 状态，需在正确回合/阶段）：
+        | 动作       | 阶段          | 操作方   | 说明 |
+        |------------|---------------|---------|------|
+        | draw       | BEFORE_DRAW   | 当前玩家 | 庄家第一巡跳过摸牌 |
+        | discard    | AFTER_DRAW    | 当前玩家 | `card_idx` = 手牌索引 |
+        | riichi     | AFTER_DRAW    | 当前玩家 | `card_idx` = 打出牌的索引 |
+        | kan        | AFTER_DRAW    | 当前玩家 | 自动从岭上摸牌 |
+        | tsumo      | AFTER_DRAW    | 当前玩家 | 自摸和牌 |
+        | ron        | AFTER_DISCARD | 对手     | 荣和对手打出的牌 |
+        | skip_ron   | AFTER_DISCARD | 对手     | 放弃荣和机会 |
+
+        **房间动作**（在进入游戏层之前由房间层处理）：
+        | 动作          | 适用状态              | 说明 |
+        |---------------|----------------------|------|
+        | start         | WAITING              | 投票开始；双方都发送后游戏启动 |
+        | start_new     | RUNNING（本轮已结束） | 投票开始下一轮 |
+        | cancel_start  | WAITING              | 撤回开始投票 |
+        | continue_game | ENDED                | 投票继续新一局 |
+        | end_game      | ENDED                | 投票结束比赛并销毁房间 |
+        | leave_room    | 任意                  | 主动关闭连接并离开房间 |
       enum:
         - start
         - start_new
+        - cancel_start
+        - continue_game
+        - end_game
+        - leave_room
         - draw
         - discard
         - riichi
@@ -150,152 +474,710 @@ components:
         - ron
         - skip_ron
 
-    # ── 服务端 → 客户端 ────────────────────────────────────────────────────────
+    # ── 广播事件载荷 ───────────────────────────────────────────────────────────
 
-    BroadcastPayload:
+    PlayerJoinedPayload:
       type: object
-      required:
-        - broadcast
-        - message
+      required: [broadcast, event, display_name, room_name, player_count]
       properties:
         broadcast:
           type: boolean
           enum: [true]
-          description: 广播消息固定为 `true`。
-        message:
+        event:
           type: string
-          description: 人类可读的事件描述。
-          example: 'alice 加入 room1。游戏开始！'
+          enum: [player_joined]
+        display_name:
+          type: string
+          description: 加入玩家的昵称。
+          example: 'Alice'
+        room_name:
+          type: string
+          example: 'room1'
+        player_count:
+          type: integer
+          description: 加入后房间内的玩家总数（1 或 2）。
+          example: 2
 
-    GameStateUpdatePayload:
+    PlayerLeftPayload:
       type: object
-      required:
-        - broadcast
-        - player_id
-        - action
-        - message
+      required: [broadcast, event, display_name, room_name, player_count]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [player_left]
+        display_name:
+          type: string
+        room_name:
+          type: string
+        player_count:
+          type: integer
+          description: 离开后房间内剩余玩家数。
+          example: 1
+
+    StartReadyChangedPayload:
+      type: object
+      required: [broadcast, event, ready_user_ids, all_ready]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [start_ready_changed]
+        ready_user_ids:
+          type: array
+          items:
+            type: string
+          description: 当前已发送 start 的玩家 UUID 列表。
+        all_ready:
+          type: boolean
+          description: 当且仅当双方均已准备时为 true（游戏即将启动）。
+
+    ContinueVoteChangedPayload:
+      type: object
+      required: [broadcast, event, continue_user_ids, all_continue]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [continue_vote_changed]
+        continue_user_ids:
+          type: array
+          items:
+            type: string
+          description: 当前已投票继续的玩家 UUID 列表。
+        all_continue:
+          type: boolean
+
+    MatchRestartedPayload:
+      type: object
+      required: [broadcast, event, room_status]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [match_restarted]
+        room_status:
+          type: string
+          enum: [waiting]
+          description: 房间已回到 WAITING 状态，等待新一局开始。
+
+    MatchEndedPayload:
+      type: object
+      required: [broadcast, event, reason, final_scores]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [match_ended]
+        reason:
+          type: string
+          description: 比赛结束原因。
+          enum:
+            - round_limit_reached
+            - point_zero
+          example: 'round_limit_reached'
+        final_scores:
+          type: object
+          description: 各玩家最终点数，以 UUID 为键。
+          additionalProperties:
+            type: integer
+          example:
+            'uuid-alice': 200000
+            'uuid-bob': 100000
+
+    ReconnectTimeoutPayload:
+      type: object
+      required: [broadcast, event, winner_id, loser_id]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [reconnect_timeout]
+        winner_id:
+          type: string
+          description: 保持在线的玩家 UUID。
+        loser_id:
+          type: string
+          description: 重连超时的玩家 UUID。
+
+    RoomExpiredPayload:
+      type: object
+      required: [broadcast, event, room_name]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [room_expired]
+        room_name:
+          type: string
+
+    RoomClosedPayload:
+      type: object
+      required: [broadcast, event, reason]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [room_closed]
+        reason:
+          type: string
+          description: 房间关闭原因。
+          example: 'player_end_game'
+
+    # ── 单播事件载荷 ───────────────────────────────────────────────────────────
+
+    RoomCreatedPayload:
+      type: object
+      required: [broadcast, event, room_name, user_id, display_name, is_owner]
       properties:
         broadcast:
           type: boolean
           enum: [false]
-          description: 定向更新固定为 `false`。
+        event:
+          type: string
+          enum: [room_created]
+        room_name:
+          type: string
+        user_id:
+          type: string
+          description: 房主的 JWT UUID。
+        display_name:
+          type: string
+        is_owner:
+          type: boolean
+          enum: [true]
+
+    OpponentDisconnectedPayload:
+      type: object
+      required: [broadcast, event]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
+        event:
+          type: string
+          enum: [opponent_disconnected]
+
+    OpponentReconnectedPayload:
+      type: object
+      required: [broadcast, event]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
+        event:
+          type: string
+          enum: [opponent_reconnected]
+
+    ErrorPayload:
+      type: object
+      required: [broadcast, event, code, message]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
+        event:
+          type: string
+          enum: [error]
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          description: 错误的人类可读描述。
+
+    # ── 游戏事件载荷 ───────────────────────────────────────────────────────────
+
+    GameStartedPayload:
+      type: object
+      required:
+        - broadcast
+        - event
+        - action
+        - message
+        - hand
+        - is_oya
+        - wall_count
+        - round_no
+        - round_limit
+        - balances
+        - fuuro
+        - kawa
+        - player_id
+      description: |
+        每轮开始时私发给每位玩家。
+        `hand` 为该玩家的私有手牌（庄家 14 张，闲家 13 张）。
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
+        event:
+          type: string
+          enum: [game_started]
+        action:
+          type: string
+          enum: [start]
+        message:
+          type: string
+          enum: [ok]
+        hand:
+          type: array
+          items:
+            type: string
+          description: 该玩家的私有手牌。
+          example: ['1s','2s','3s','4s','5s','6s','7s','8s','9s','1s','2s','3s','4s']
+        is_oya:
+          type: boolean
+          description: 该玩家本轮是否为庄家。
+        wall_count:
+          type: integer
+          description: 发牌后牌山剩余牌数。
+        round_no:
+          type: integer
+          description: 本轮之前已完成的轮数（从 0 开始）。
+        round_limit:
+          type: integer
+          description: 本场比赛总轮数上限（默认 8）。
+        balances:
+          $ref: '#/components/schemas/Balances'
+        fuuro:
+          $ref: '#/components/schemas/FuuroMap'
+        kawa:
+          $ref: '#/components/schemas/KawaMap'
         player_id:
           type: string
-          description: 本条消息的目标玩家。
+          description: 接收方玩家 UUID（与 JWT UUID 一致）。
+
+    GameSnapshotPayload:
+      type: object
+      required:
+        - broadcast
+        - event
+        - game_status
+        - turn_stage
+        - current_player
+        - opponent_id
+        - turn_number
+        - round_no
+        - round_limit
+        - wall_count
+        - kyoutaku_number
+        - tsumi_number
+        - me
+        - opponent
+      description: |
+        向重连玩家推送的完整游戏状态快照（RUNNING 或 ENDED 状态）。
+        `current_player` 为下一个应该行动的玩家 UUID。
+        约定：在 `after_discard` 阶段，该字段指向*可以荣和/跳过*的玩家
+        （即打出牌的对手），而非打牌方本身。
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
+        event:
+          type: string
+          enum: [game_snapshot]
+        game_status:
+          type: string
+          description: 快照时的游戏引擎状态。
+          enum: [waiting, running, reconnect, ended]
+        turn_stage:
+          type: string
+          enum: [before_draw, after_draw, after_discard]
+        current_player:
+          type: string
+          description: 当前应行动的玩家 UUID（见上方约定）。
+        opponent_id:
+          type: string
+          description: 对手 UUID。
+        turn_number:
+          type: integer
+          description: 本轮内部回合计数器。
+        round_no:
+          type: integer
+        round_limit:
+          type: integer
+        wall_count:
+          type: integer
+        kyoutaku_number:
+          type: integer
+          description: 桌上供托立直棒数。
+        tsumi_number:
+          type: integer
+          description: 本场棒（连庄/累积流局计数）。
+        me:
+          $ref: '#/components/schemas/SnapshotPlayerView'
+        opponent:
+          $ref: '#/components/schemas/SnapshotOpponentView'
+
+    SnapshotPlayerView:
+      type: object
+      description: 接收方玩家的完整私有数据。
+      required: [hand, fuuro, kawa, point, is_oya, is_riichi]
+      properties:
+        hand:
+          type: array
+          items:
+            type: string
+        fuuro:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+        kawa:
+          type: array
+          items:
+            type: array
+            prefixItems:
+              - type: string
+              - type: boolean
+        point:
+          type: integer
+        is_oya:
+          type: boolean
+        is_riichi:
+          type: boolean
+
+    SnapshotOpponentView:
+      type: object
+      description: 遮蔽后的对手数据（手牌隐藏，仅显示张数）。
+      required: [display_name, hand_count, fuuro, kawa, point, is_oya, is_riichi]
+      properties:
+        display_name:
+          type: string
+        hand_count:
+          type: integer
+          description: 对手手牌张数（私有手牌已遮蔽）。
+        fuuro:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+        kawa:
+          type: array
+          items:
+            type: array
+            prefixItems:
+              - type: string
+              - type: boolean
+        point:
+          type: integer
+        is_oya:
+          type: boolean
+        is_riichi:
+          type: boolean
+
+    GameActionResponsePayload:
+      type: object
+      required: [broadcast, action, message, fuuro, kawa, balances, wall_count]
+      description: |
+        每次游戏内动作后私发给每位玩家。
+        标注为可选的字段仅在特定动作下出现。
+
+        | 字段         | 出现时机 |
+        |--------------|---------|
+        | hand         | 行动方手牌有更新（draw/discard/riichi/kan） |
+        | is_oya       | 仅 start 动作 |
+        | card_idx     | draw/discard/riichi/kan |
+        | card         | draw/discard/riichi/kan |
+        | agari        | tsumo 或 ron 成功和牌 |
+        | han/fu/point/yaku | agari=true 时 |
+        | ryukyoku     | 荒牌流局（牌山摸空，无人和牌） |
+        | tenpai       | ryukyoku=true 时——各玩家是否听牌 |
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
         action:
           $ref: '#/components/schemas/ActionType'
         message:
           type: string
-          description: |
-            成功时为 `"ok"`，失败时为错误码。
-          oneOf:
-            - type: string
-              enum: ['ok']
-            - $ref: '#/components/schemas/ErrorCode'
+          description: 成功时为 `ok`，失败时为错误码字符串。
+          example: 'ok'
+        player_id:
+          type: string
+          description: 执行本次动作的玩家 UUID。
+        wall_count:
+          type: integer
+        balances:
+          $ref: '#/components/schemas/Balances'
+        fuuro:
+          $ref: '#/components/schemas/FuuroMap'
+        kawa:
+          $ref: '#/components/schemas/KawaMap'
+        hand:
+          type: array
+          description: 接收方玩家更新后的私有手牌。
+          items:
+            type: string
+        is_oya:
+          type: boolean
         card_idx:
           type: integer
           description: 本次动作涉及的牌的索引。
         card:
           type: string
-          description: 本次动作涉及的牌（如 "5s"）。
+          description: 本次动作涉及的牌（如 `"5s"`）。
           example: '5s'
-        hand:
-          type: array
-          description: 动作后接收方玩家的完整手牌。
-          items:
-            type: string
-          example: ['1s', '2s', '3s', '4s', '5s']
-        is_oya:
-          type: boolean
-          description: 接收方玩家是否为庄家。
-        current_player:
-          type: string
-          description: 当前回合玩家的 ID。
-        turn_stage:
-          type: string
-          description: 当前回合阶段。
-          enum:
-            - before_draw
-            - after_draw
-            - after_discard
-        wall_count:
-          type: integer
-          description: 牌山剩余牌数。
-        kyoutaku_number:
-          type: integer
-          description: 桌上供托立直棒数。
-        fuuro:
-          type: object
-          description: 各玩家的副露（杠）牌组，以 player_id 为键。
-          additionalProperties:
-            type: array
-            items:
-              type: array
-              items:
-                type: string
-          example:
-            alice: [['1s', '1s', '1s', '1s']]
-            bob: []
-        kawa:
-          type: object
-          description: |
-            各玩家的牌河，以 player_id 为键。
-            每条记录格式为 `[牌, 是否为立直打出]`。
-          additionalProperties:
-            type: array
-            items:
-              type: array
-              prefixItems:
-                - type: string
-                - type: boolean
-          example:
-            alice: [['5s', false], ['3s', true]]
-            bob: [['7s', false]]
-        point:
-          type: object
-          description: 各玩家当前点数，以 player_id 为键。
-          additionalProperties:
-            type: integer
-          example:
-            alice: 150000
-            bob: 150000
-        # 和牌结果字段 — 仅在 agari 为 true 时出现
         agari:
           type: boolean
-          description: 声明和牌时出现且值为 `true`。
+          description: 声明和牌时出现且值为 true。
         han:
           type: integer
-          description: 和牌的翻数。
         fu:
           type: integer
-          description: 和牌的符数。
+        point:
+          type: integer
+          description: 本次和牌点数变动（正数为得，负数为失）。
         yaku:
           type: array
-          description: 达成的役种列表。
           items:
             type: string
           example: ['Chinitsu', 'Riichi']
+        ryukyoku:
+          type: boolean
+          description: 荒牌流局时出现且值为 true。
+        tenpai:
+          type: object
+          description: 流局时各玩家的听牌状态。
+          additionalProperties:
+            type: object
+            required: [is_tenpai, hand]
+            properties:
+              is_tenpai:
+                type: boolean
+              hand:
+                type: array
+                items:
+                  type: string
+                description: 听牌时为玩家手牌，未听牌时为空数组。
+
+    # ── 共用子 schema ──────────────────────────────────────────────────────────
+
+    Balances:
+      type: object
+      description: 各玩家当前点数，以 UUID 为键。
+      additionalProperties:
+        type: integer
+      example:
+        'uuid-alice': 150000
+        'uuid-bob': 150000
+
+    FuuroMap:
+      type: object
+      description: 各玩家的副露（杠）牌组，以 UUID 为键。
+      additionalProperties:
+        type: array
+        items:
+          type: array
+          items:
+            type: string
+      example:
+        'uuid-alice': [['1s', '1s', '1s', '1s']]
+        'uuid-bob': []
+
+    KawaMap:
+      type: object
+      description: |
+        各玩家的牌河，以 UUID 为键。
+        每条记录格式为 `[牌标识, 是否为立直时打出]`。
+      additionalProperties:
+        type: array
+        items:
+          type: array
+          prefixItems:
+            - type: string
+            - type: boolean
+      example:
+        'uuid-alice': [['5s', false], ['3s', true]]
+        'uuid-bob': [['7s', false]]
+
+    # ── 旁观者 schema ──────────────────────────────────────────────────────────
+
+    SpectatorJoinedPayload:
+      type: object
+      required: [broadcast, event, display_name, spectator_count]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [spectator_joined]
+        display_name:
+          type: string
+          description: 加入的旁观者昵称。
+          example: 'Charlie'
+        spectator_count:
+          type: integer
+          description: 加入后房间的旁观者总数。
+          example: 1
+
+    SpectatorLeftPayload:
+      type: object
+      required: [broadcast, event, display_name, spectator_count]
+      properties:
+        broadcast:
+          type: boolean
+          enum: [true]
+        event:
+          type: string
+          enum: [spectator_left]
+        display_name:
+          type: string
+          description: 离开的旁观者昵称。
+        spectator_count:
+          type: integer
+          description: 离开后剩余旁观者数量。
+          example: 0
+
+    SpectatorSnapshotPayload:
+      type: object
+      required:
+        - broadcast
+        - event
+        - game_status
+        - turn_stage
+        - current_player
+        - wall_count
+        - round_no
+        - round_limit
+        - kyoutaku_number
+        - spectator_count
+        - players
+      description: |
+        发送给旁观者的全知视角游戏状态。
+        所有玩家手牌完全可见。
+        `current_player` 遵循与玩家快照相同的 after_discard 约定。
+        用于 `spectator_snapshot`（加入时）和 `spectator_game_update`（动作后）两种事件。
+      properties:
+        broadcast:
+          type: boolean
+          enum: [false]
+        event:
+          type: string
+          enum: [spectator_snapshot, spectator_game_update]
+        game_status:
+          type: string
+          enum: [waiting, running, reconnect, ended]
+        turn_stage:
+          type: string
+          nullable: true
+          enum: [before_draw, after_draw, after_discard]
+        current_player:
+          type: string
+          nullable: true
+          description: 当前应行动玩家的 UUID。
+        wall_count:
+          type: integer
+        round_no:
+          type: integer
+          description: 已完成轮数（从 0 开始）。
+        round_limit:
+          type: integer
+        kyoutaku_number:
+          type: integer
+          description: 桌上的立直棒数量。
+        spectator_count:
+          type: integer
+          description: 当前旁观者数量。
+        players:
+          type: object
+          description: 所有玩家的完整数据，以 UUID 为键。
+          additionalProperties:
+            $ref: '#/components/schemas/SpectatorPlayerView'
+
+    SpectatorPlayerView:
+      type: object
+      description: 旁观者视角下单个玩家的完整（全知）数据。
+      required: [display_name, hand, fuuro, kawa, point, is_oya, is_riichi, num_kan]
+      properties:
+        display_name:
+          type: string
+        hand:
+          type: array
+          items:
+            type: string
+          description: 完整手牌（明示所有牌）。
+        fuuro:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+          description: 已声明的副露（杠）牌组。
+        kawa:
+          type: array
+          items:
+            type: array
+            prefixItems:
+              - type: string
+              - type: boolean
+          description: 牌河；每条记录格式为 `[牌标识, 是否为立直时打出]`。
+        point:
+          type: integer
+        is_oya:
+          type: boolean
+        is_riichi:
+          type: boolean
+        num_kan:
+          type: integer
+          description: 该玩家已宣告的杠数。
+
+    # ── 错误码 ─────────────────────────────────────────────────────────────────
 
     ErrorCode:
       type: string
       description: |
-        动作非法时在 `message` 字段中返回的错误码。
+        动作被拒绝时在 error 事件的 `code` 字段中返回的错误码。
 
-        | 错误码               | 原因 |
-        |----------------------|------|
-        | not_your_turn        | 在非自己回合执行了动作 |
-        | not_opponent_turn    | 在自己回合执行了 ron/skip_ron |
-        | card_index_error     | 牌索引无效或超出范围 |
-        | illegal_draw         | 摸牌阶段错误，或庄家第一巡尝试摸牌 |
-        | illegal_kan          | 杠阶段错误或牌数不足 |
-        | illegal_discard      | 打牌阶段错误 |
-        | illegal_riichi       | 立直阶段错误或已立直 |
-        | illegal_tsumo        | 自摸阶段错误 |
-        | illegal_ron          | 荣和阶段错误 |
-        | room_full            | 房间已满（同时以 WS 关闭码 1003 发送） |
-        | duplicate_id         | player_id 已被占用（同时以 WS 关闭码 1003 发送） |
-        | not_enough_players   | 玩家不足，无法开始游戏 |
+        **房间层错误：**
+        | 错误码                       | 原因 |
+        |------------------------------|------|
+        | game_not_started             | WAITING 状态下发送了游戏动作 |
+        | game_paused                  | RECONNECT 状态下发送了游戏动作 |
+        | game_ended                   | ENDED 状态下发送了非法动作 |
+        | round_not_ended              | 本轮未结束时发送了 `start_new` |
+        | not_enough_players           | 在线人数不足 2 时发送了 `start` |
+        | unknown_action               | 未识别的动作字符串 |
+        | spectator_action_forbidden   | 旁观者发送了任何动作（旁观者为只读角色）|
+
+        **游戏层错误**（回合/阶段校验）：
+        | 错误码            | 原因 |
+        |-------------------|------|
+        | not_your_turn     | 在非自己回合执行了动作 |
+        | not_opponent_turn | 在自己回合执行了 ron/skip_ron |
+        | card_index_error  | card_idx 缺失、非数字或超出范围 |
+        | illegal_draw      | 摸牌阶段错误，或庄家第一巡尝试摸牌 |
+        | illegal_kan       | 杠阶段错误或牌数不足 |
+        | illegal_discard   | 打牌阶段错误 |
+        | illegal_riichi    | 立直阶段错误或已立直 |
+        | illegal_tsumo     | 自摸阶段错误 |
+        | illegal_ron       | 荣和阶段错误 |
       enum:
+        - game_not_started
+        - game_paused
+        - game_ended
+        - round_not_ended
+        - not_enough_players
+        - unknown_action
         - not_your_turn
         - not_opponent_turn
         - card_index_error
@@ -305,6 +1187,4 @@ components:
         - illegal_riichi
         - illegal_tsumo
         - illegal_ron
-        - room_full
-        - duplicate_id
-        - not_enough_players
+        - spectator_action_forbidden
