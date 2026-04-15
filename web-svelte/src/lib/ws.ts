@@ -20,7 +20,8 @@ export const gameState = writable<GameState>({
 	selectedIdx: null,
 	wallCount: 36,
 	kyoutaku: 0,
-	oppDisplayName: ''
+	oppDisplayName: '',
+	matchResult: null
 });
 
 export const logs = writable<{ text: string; type: string }[]>([]);
@@ -147,9 +148,18 @@ export function sendAction(action: string, cardIdx?: number | null) {
 }
 
 // --- Connection ---
+export interface RoomSettings {
+	initialPoint?: number;
+	noAgariPunishment?: number;
+	debugCode?: number;
+	sortHand?: boolean;
+	vsBot?: boolean;
+	botLevel?: string;
+}
+
 export function connect(
 	roomName: string,
-	options?: { vsBot?: boolean; botLevel?: string }
+	settings?: RoomSettings
 ): Promise<{ ok: boolean; reason?: string }> {
 	stopWatchingHeartbeat();
 	stopSendingHeartbeat();
@@ -157,7 +167,6 @@ export function connect(
 	myId = getUuid();
 	myDisplayName = getUsername();
 	const token = getToken();
-	const { vsBot = false, botLevel = 'normal' } = options ?? {};
 
 	return new Promise((resolve) => {
 		let resolved = false;
@@ -172,8 +181,14 @@ export function connect(
 		// In dev, set VITE_WS_URL to point at the backend (e.g. ws://localhost:8000).
 		const base = import.meta.env.VITE_WS_URL
 			|| `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
-		let url = `${base}/ws/${roomName}?token=${encodeURIComponent(token)}`;
-		if (vsBot) url += `&bot=1&level=${encodeURIComponent(botLevel)}`;
+		const params = new URLSearchParams({ token });
+		if (settings?.initialPoint != null)        params.set('initial_point', String(settings.initialPoint));
+		if (settings?.noAgariPunishment != null)   params.set('no_agari_punishment', String(settings.noAgariPunishment));
+		if (settings?.debugCode != null)           params.set('debug_code', String(settings.debugCode));
+		if (settings?.sortHand != null)            params.set('sort_hand', String(settings.sortHand));
+		if (settings?.vsBot)                       params.set('bot', '1');
+		if (settings?.botLevel)                    params.set('level', settings.botLevel);
+		const url = `${base}/ws/${roomName}?${params}`;
 		console.log('[ws] connecting to', url);
 		ws = new WebSocket(url);
 
@@ -271,7 +286,8 @@ function handleBroadcastEvent(data: Record<string, unknown>) {
 	}
 
 	if (event === 'match_restarted') {
-		gameState.update((s) => ({ ...s, phase: 'waiting' }));
+		gameState.update((s) => ({ ...s, phase: 'waiting', matchResult: null }));
+		agariResult.set(null);
 		logMsg('Match restarted. Click Start to begin!', 'broadcast');
 		return;
 	}
@@ -279,13 +295,12 @@ function handleBroadcastEvent(data: Record<string, unknown>) {
 	if (event === 'match_ended') {
 		const reason = data.reason as string;
 		const scores = data.final_scores as Record<string, number>;
-		const myScore = scores[myId] ?? 0;
-		const oppScore = scores[oppId] ?? 0;
-		logMsg(
-			`Match over (${reason}). Final — You: ${myScore.toLocaleString()}, Opp: ${oppScore.toLocaleString()}`,
-			'broadcast'
-		);
-		gameState.update((s) => ({ ...s, phase: 'ended' }));
+		const winnerId = (data.winner_id as string | null) ?? null;
+		gameState.update((s) => ({
+			...s,
+			phase: 'ended',
+			matchResult: { reason, winnerId, finalScores: scores },
+		}));
 		return;
 	}
 

@@ -148,6 +148,8 @@ class Room:
     round_limit: int = DEFAULT_ROUND_LIMIT      # 比赛轮数上限
     vs_bot: bool = False                        # 是否为人机对战房间
     bot_level: str = "normal"                   # bot 难度：easy / normal / hard
+    rules: dict = field(default_factory=dict)   # 房主指定的游戏规则（host-only）
+    debug_code: int | None = None               # 作弊码，每局自动使用
 
     def __post_init__(self):
         if self.expires_at == 0.0:
@@ -186,6 +188,8 @@ class Room:
             "round_limit": str(self.round_limit),
             "vs_bot": "true" if self.vs_bot else "false",
             "bot_level": self.bot_level,
+            "rules": json.dumps(self.rules),
+            "debug_code": str(self.debug_code) if self.debug_code is not None else "",
         }
 
     @classmethod
@@ -210,4 +214,6 @@ class Room:
             round_limit=int(data.get("round_limit", DEFAULT_ROUND_LIMIT)),
             vs_bot=data.get("vs_bot", "false") == "true",
             bot_level=data.get("bot_level", "normal"),
+            rules=json.loads(data.get("rules", "{}")),
+            debug_code=int(data["debug_code"]) if data.get("debug_code") else None,
         )

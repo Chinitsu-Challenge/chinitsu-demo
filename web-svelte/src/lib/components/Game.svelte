@@ -5,6 +5,7 @@
 	import Kawa from './Kawa.svelte';
 	import Fuuro from './Fuuro.svelte';
 	import AgariOverlay from './AgariOverlay.svelte';
+	import MatchEndOverlay from './MatchEndOverlay.svelte';
 	import MessageLog from './MessageLog.svelte';
 	import { onMount } from 'svelte';
 
@@ -146,6 +147,9 @@
 		{/if}
 	</div>
 
-	<AgariOverlay />
+	{#if !s.matchResult}
+		<AgariOverlay />
+	{/if}
+	<MatchEndOverlay />
 	<MessageLog />
 </div>

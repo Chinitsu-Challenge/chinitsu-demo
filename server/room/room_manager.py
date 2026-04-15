@@ -242,6 +242,8 @@ class RoomManager:
         display_name: str,
         vs_bot: bool = False,
         bot_level: str = "normal",
+        rules: dict = None,
+        debug_code: int = None,
     ) -> bool:
         """
         玩家建立 WebSocket 连接时调用。
@@ -391,7 +393,8 @@ class RoomManager:
 
         if room is None:
             # 场景 3：房间不存在 → 创建房间
-            await self._create_room(ws, room_name, user_id, display_name, vs_bot, bot_level)
+            await self._create_room(ws, room_name, user_id, display_name, vs_bot, bot_level,
+                                     rules=rules, debug_code=debug_code)
         else:
             # 场景 4：房间存在且有空位 → 加入
             await self._join_room(ws, room, user_id, display_name)
@@ -497,6 +500,8 @@ class RoomManager:
         display_name: str,
         vs_bot: bool = False,
         bot_level: str = "normal",
+        rules: dict = None,
+        debug_code: int = None,
     ) -> None:
         """创建新房间（[空] → WAITING）"""
         # 清理 Redis 中可能残留的同名孤立数据（服务进程崩溃后可能遗留）。
@@ -521,6 +526,8 @@ class RoomManager:
             round_limit=DEFAULT_ROUND_LIMIT,
             vs_bot=vs_bot,
             bot_level=bot_level,
+            rules=rules or {},
+            debug_code=debug_code,
         )
         self.rooms[room_name] = room
 
@@ -946,8 +953,15 @@ class RoomManager:
         players = snapshot.get("players", {})
         final_scores = {pid: pdata.get("point", 0) for pid, pdata in players.items()}
 
+        # 确定胜者：积分最高者；若积分相同则 winner_id = None（平局）
+        sorted_players = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
+        if len(sorted_players) >= 2 and sorted_players[0][1] != sorted_players[1][1]:
+            winner_id = sorted_players[0][0]
+        else:
+            winner_id = None
+
         # 广播比赛结束
-        await self.push.broadcast(room_name, protocol.make_match_ended(reason, final_scores))
+        await self.push.broadcast(room_name, protocol.make_match_ended(reason, final_scores, winner_id))
 
         logger.info("比赛结束 [%s] 原因=%s 分数=%s", room_name, reason, final_scores)
 
@@ -961,8 +975,8 @@ class RoomManager:
         """
         room_name = room.room_name
 
-        # 创建游戏实例
-        game = ChinitsuGame()
+        # 创建游戏实例（应用房主规则）
+        game = ChinitsuGame(rules=room.rules or None, debug_code=room.debug_code)
         for uid in room.player_ids:
             game.add_player(uid)
 

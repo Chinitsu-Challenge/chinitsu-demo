@@ -43,6 +43,8 @@ class ConnectionManager:
         display_name: str = "",
         vs_bot: bool = False,
         bot_level: str = "normal",
+        rules: dict = None,
+        debug_code: int = None,
     ) -> bool:
         """
         玩家连接入口。
@@ -52,6 +54,7 @@ class ConnectionManager:
         return await self.room_manager.connect(
             websocket, room_name, player_id, display_name,
             vs_bot=vs_bot, bot_level=bot_level,
+            rules=rules, debug_code=debug_code,
         )
 
     async def disconnect(self, websocket: WebSocket, room_name: str, player_id: str):

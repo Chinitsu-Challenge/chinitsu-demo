@@ -18,13 +18,11 @@ from managers import ConnectionManager
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # 启动时初始化数据库和 Redis
     await init_db()
     await init_redis()
     # 从 Redis 恢复上次服务进程中的活跃房间（断线重连、游戏继续）
     await room_manager.startup_restore()
     yield
-    # 关闭时清理 Redis 连接
     await close_redis()
 
 
@@ -70,7 +68,7 @@ async def api_login(req: LoginRequest):
 _SERVER_DIR = Path(__file__).resolve().parent        # server/
 _PROJECT_DIR = _SERVER_DIR.parent                    # project root
 
-# 全局实例：RoomManager 是新的核心管理器
+# Global instances
 room_manager = RoomManager()
 manager = ConnectionManager(room_manager)
 
@@ -103,8 +101,11 @@ async def websocket_endpoint(
     token: str = Query(""),
     bot: str = Query(""),
     level: str = Query("normal"),
+    initial_point: int = Query(default=None),
+    no_agari_punishment: int = Query(default=None),
+    debug_code: int = Query(default=None),
+    sort_hand: bool = Query(default=None),
 ):
-    # 验证 JWT token
     payload = verify_token(token)
     if payload is None:
         await websocket.accept()
@@ -114,14 +115,23 @@ async def websocket_endpoint(
     player_id = payload["uuid"]
     display_name = payload["username"]
 
-    # bot=1 表示人机对战；level 支持 easy / normal / hard
     vs_bot = (bot == "1")
     bot_level = level if level in ("easy", "normal", "hard") else "normal"
 
-    # 连接到房间（RoomManager 处理创建/加入/重连）
+    rules = {}
+    if initial_point is not None:
+        rules["initial_point"] = initial_point
+    if no_agari_punishment is not None:
+        rules["no_agari_punishment"] = no_agari_punishment
+    if sort_hand is not None:
+        rules["sort_hand"] = sort_hand
+
     try:
-        connected = await manager.connect(websocket, room_name, player_id, display_name,
-                                          vs_bot=vs_bot, bot_level=bot_level)
+        connected = await manager.connect(
+            websocket, room_name, player_id, display_name,
+            vs_bot=vs_bot, bot_level=bot_level,
+            rules=rules or None, debug_code=debug_code,
+        )
     except Exception:
         logger.exception("manager.connect 异常 [%s/%s]", room_name, player_id[:8])
         return
@@ -133,7 +143,6 @@ async def websocket_endpoint(
             data = await websocket.receive_json()
             await manager.game_action(data, room_name, player_id)
     except WebSocketDisconnect:
-        # 断线处理（RoomManager 根据状态决定移除/重连/销毁）
         await manager.disconnect(websocket, room_name, player_id)
 
 

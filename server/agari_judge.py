@@ -44,9 +44,9 @@ class AgariJudger():
                                      )
     
     
-    def judge(self, hand: List[str], 
-              fuuro: List[Tuple[str]], 
-              win_card: str, 
+    def judge(self, hand: List[str],
+              fuuro: List[Tuple[str]],
+              win_card: str,
               is_tsumo=False,
               is_riichi=False,
               is_ippatsu=False,
@@ -61,11 +61,24 @@ class AgariJudger():
               is_oya=False,
               kyoutaku_number=0,
               tsumi_number=0) -> HandResponse:
-        hand_souzi_str = ''.join(sorted([s.strip('s') for s in hand]))
+        # Include fuuro tiles in the full tile set (required for correct hand evaluation)
+        all_cards = list(hand)
+        for meld in fuuro:
+            all_cards.extend(meld)
+        hand_souzi_str = ''.join(sorted([s.strip('s') for s in all_cards]))
         tiles = TilesConverter.string_to_136_array(sou=hand_souzi_str)
         win_tile = TilesConverter.string_to_136_array(sou=win_card.strip('s'))[0]
-        result: HandResponse = calculator.estimate_hand_value(tiles, 
-                                                              win_tile, 
+
+        # Build closed Meld objects for each kan in fuuro
+        melds = []
+        for meld in fuuro:
+            meld_str = ''.join(sorted([s.strip('s') for s in meld]))
+            meld_tiles = TilesConverter.string_to_136_array(sou=meld_str)
+            melds.append(Meld(meld_type=Meld.KAN, tiles=meld_tiles, opened=False))
+
+        result: HandResponse = calculator.estimate_hand_value(tiles,
+                                                              win_tile,
+                                                              melds=melds if melds else None,
                                                               config=HandConfig(options=self.options,
                                                                                 is_tsumo=is_tsumo,
                                                                                 is_riichi=is_riichi,

@@ -1,11 +1,78 @@
 # pylint: disable=missing-function-docstring, missing-module-docstring, missing-class-docstring, line-too-long
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Set
 import random, time, logging
 from agari_judge import AgariJudger, HandResponse, get_tenpai_tiles
-from debug_setting import debug_yama
+from debug_setting import debug_yama, debug_cards
 logger = logging.getLogger("uvicorn")
 
 WAITING, RUNNING, RECONNECT, ENDED = 0, 1, 2, 3
+
+
+# ---------------------------------------------------------------------------
+# Riichi kan legality helpers
+# ---------------------------------------------------------------------------
+
+def _find_exactly_n_mentsu(counts: List[int], n: int) -> List[List]:
+    """Recursively find all ways to partition tile counts into exactly n mentsu.
+    counts: 9-element list of tile counts for 1s-9s (0-indexed).
+    Returns list of decompositions; each decomposition is a list of ('koutsu'|'shuntsu', start_idx).
+    """
+    if n == 0:
+        return [[]] if all(c == 0 for c in counts) else []
+    pos = next((i for i in range(9) if counts[i] > 0), None)
+    if pos is None:
+        return []
+    results = []
+    if counts[pos] >= 3:
+        nc = list(counts)
+        nc[pos] -= 3
+        for rest in _find_exactly_n_mentsu(nc, n - 1):
+            results.append([('koutsu', pos)] + rest)
+    if pos + 2 < 9 and counts[pos + 1] >= 1 and counts[pos + 2] >= 1:
+        nc = list(counts)
+        nc[pos] -= 1; nc[pos + 1] -= 1; nc[pos + 2] -= 1
+        for rest in _find_exactly_n_mentsu(nc, n - 1):
+            results.append([('shuntsu', pos)] + rest)
+    return results
+
+
+def _kan_tile_in_shuntsu(hand: List[str], kan_card: str) -> bool:
+    """Return True if kan_card appears in a shuntsu in ANY valid tenpai decomposition of hand."""
+    kan_val = int(kan_card[0]) - 1
+    tenpai_tiles = get_tenpai_tiles(hand)
+    if not tenpai_tiles:
+        return False
+    needed_mentsu = (len(hand) - 1) // 3  # 13→4, 10→3, 7→2
+    for win_tile in tenpai_tiles:
+        hand_complete = hand + [win_tile]
+        counts = [0] * 9
+        for c in hand_complete:
+            counts[int(c[0]) - 1] += 1
+        for pair_pos in range(9):
+            if counts[pair_pos] < 2:
+                continue
+            nc = list(counts)
+            nc[pair_pos] -= 2
+            for decomp in _find_exactly_n_mentsu(nc, needed_mentsu):
+                for mtype, start in decomp:
+                    if mtype == 'shuntsu' and start <= kan_val <= start + 2:
+                        return True
+    return False
+
+
+def _is_riichi_kan_legal(player, kan_card: str) -> bool:
+    """Check all three legality conditions for a riichi ankan.
+    Rule 1 (source): always satisfied — only ankan exists in this game.
+    Rule 2 (machi unchanged): tenpai tiles before and after kan must be identical.
+    Rule 3 (structure unchanged): the 4 tiles must not appear in any shuntsu.
+    """
+    riichi_hand = player.hand[:-1]  # hand before current draw
+    remaining = [c for c in riichi_hand if c != kan_card]
+    if set(get_tenpai_tiles(remaining)) != player.riichi_machi:
+        return False
+    if _kan_tile_in_shuntsu(riichi_hand, kan_card):
+        return False
+    return True
 default_rules = {
     "initial_point" : 150_000,
     "no_agari_punishment": 20_000, 
@@ -30,6 +97,8 @@ class ChinitsuPlayer:
         self.is_rinshan = False
         self.is_furiten = False       # permanent furiten (riichi + skipped ron)
         self.is_temp_furiten = False  # temporary furiten (skipped ron, cleared on next discard)
+        self.has_illegal_kan = False  # deferred penalty: illegal riichi kan
+        self.riichi_machi: Set[str] = set()  # tenpai tiles saved at riichi declaration
 
         # last card of hand is tsumo card (only after drawing a card)
         self.hand: List[str] = []
@@ -47,6 +116,8 @@ class ChinitsuPlayer:
         self.is_rinshan = False
         self.is_furiten = False
         self.is_temp_furiten = False
+        self.has_illegal_kan = False
+        self.riichi_machi: Set[str] = set()
 
         # last card of hand is tsumo card (only after drawing a card)
         self.hand: List[str] = []
@@ -133,7 +204,7 @@ class TurnState:
 
 
 class ChinitsuGame:
-    def __init__(self, rules: Dict=None) -> None:
+    def __init__(self, rules: Dict=None, debug_code: int=None) -> None:
         self._players: Dict[str, ChinitsuPlayer] = {}
         self.status = WAITING
         self.yama : List[str] = []
@@ -142,14 +213,16 @@ class ChinitsuGame:
         self.tsumi_number = 0
         self.next_oya = None   # set after each round; None = randomize
         self._ready = set()    # tracks which players clicked start_new
+        self.debug_code = debug_code if debug_code in debug_cards else None
         self.set_rules(rules)
 
     def set_rules(self, rules: dict):
-
-        self.rules = default_rules
+        # Copy default_rules to avoid mutating the module-level dict across games.
+        self.rules = dict(default_rules)
         if rules is not None:
             self.rules.update(rules)
-        self.agari_judger = AgariJudger(self.rules['yaku_rules'])
+        # Unpack yaku_rules dict as kwargs so has_daisharin/renhou_as_yakuman are passed correctly.
+        self.agari_judger = AgariJudger(**self.rules['yaku_rules'])
 
     @property
     def player_ids(self):
@@ -191,7 +264,7 @@ class ChinitsuGame:
             raise ValueError(f"Too few cards to draw! {len(self.yama)}")
 
         cards = [self.yama[-1]]
-        self._players[player_name].draw(cards)
+        self._players[player_name].draw(cards, is_rinshan=True)
         self.yama = self.yama[:-1]
         return cards
 
@@ -207,7 +280,8 @@ class ChinitsuGame:
         else:
             idx = random.randint(0, 1)
             oya = self.player_ids[idx]
-        self.start_game(oya, debug_code)
+        # explicit arg takes priority; fall back to room-level debug_code
+        self.start_game(oya, debug_code or self.debug_code)
 
     def start_game(self, oya: str, debug_code=None):
 
@@ -218,11 +292,11 @@ class ChinitsuGame:
 
         # randomize the yama and draw cards
         random.seed(time.time())
-        if not debug_code:
+        if debug_code and debug_code in debug_cards:
+            self.yama = debug_yama(debug_code)
+        else:
             self.yama = ([f"{i}s" for i in range(1, 9+1)] * 4)[:]
             random.shuffle(self.yama)
-        else:   # debug mode
-            self.yama = debug_yama(debug_code)
 
 
         for _, p in self._players.items():
@@ -238,8 +312,23 @@ class ChinitsuGame:
             self.draw_from_yama(ko, 4)
         self.draw_from_yama(oya, 2)
         self.draw_from_yama(ko, 1)
+        self.set_running()
+        if self.rules.get('sort_hand'):
+            # Oya has 14 tiles: sort first 13, keep tile 14 at end as tsumo tile.
+            # Ko has 13 tiles: full sort is safe (ko draws before tsumo).
+            oya_hand = self._players[oya].hand
+            oya_hand[:-1] = sorted(oya_hand[:-1])
+            self._players[ko].hand.sort()
 
 
+
+    def _sort_hand_if_enabled(self, player_name: str):
+        if self.rules.get('sort_hand'):
+            hand = self._players[player_name].hand
+            if len(hand) > 1:
+                # Sort all tiles except the last (newly drawn) tile so that
+                # hand[-1] always points to the tsumo tile for win evaluation.
+                hand[:-1] = sorted(hand[:-1])
 
     def add_player(self, player_name: str):
         if len(self._players) >= 2:
@@ -347,6 +436,9 @@ class ChinitsuGame:
 
             self.start_new_game(debug_code=debug_code)
             self.state.next()  # oya does not need to draw, set to after_draw
+            # Refresh fuuro/kawa after reset_game() has been called
+            public_info["fuuro"] = {name: p.fuuro for name, p in self._players.items()}
+            public_info["kawa"] = {name: p.kawa for name, p in self._players.items()}
             res = {player_id: {"message": "ok"}}
             for name, p in self._players.items():
                 if name not in res:
@@ -386,11 +478,34 @@ class ChinitsuGame:
                 for name, pl in self._players.items():
                     tiles = get_tenpai_tiles(pl.hand, pl.num_fuuro)
                     tenpai_info[name] = {"is_tenpai": bool(tiles), "hand": pl.hand if tiles else []}
+
+                # Illegal riichi kan penalty (deferred chombo)
+                # Rule: violator who is tenpai at ryukyoku pays -20,000.
+                # Double chombo: if both violate, penalties cancel out (no change).
+                chombo_players = [
+                    name for name, pl in self._players.items()
+                    if pl.has_illegal_kan and tenpai_info[name]["is_tenpai"]
+                ]
+                if len(chombo_players) == 2:
+                    # Double chombo — cancel out, no score change
+                    logger.info("Double chombo at ryukyoku — penalties cancelled")
+                    public_info["double_chombo"] = True
+                elif len(chombo_players) == 1:
+                    offender = chombo_players[0]
+                    other = [n for n in self.player_ids if n != offender][0]
+                    punishment = self.rules['no_agari_punishment']
+                    self._players[offender].point -= punishment
+                    self._players[other].point += punishment
+                    logger.info("Chombo at ryukyoku: %s pays %d", offender, punishment)
+                    public_info["chombo"] = offender
+
                 public_info["ryukyoku"] = True
                 public_info["tenpai"] = tenpai_info
+                self.set_ended()
                 res = {player_id: {"message": "ok"}}
             else:
                 cards = self.draw_from_yama(player_id)
+                self._sort_hand_if_enabled(player_id)
                 public_info["card_idx"] = p.len_hand
                 res = {player_id: {"hand": p.hand}}
                 self.state.next()
@@ -401,6 +516,13 @@ class ChinitsuGame:
                 res = {player_id: {"message": "illegal_kan"}}
                 return res
             kan_card = p.hand[card_idx] # kan card type
+
+            # Riichi kan legality check: silently flag but allow the kan to proceed.
+            # Penalty is deferred until the violator attempts to win or reach ryukyoku tenpai.
+            if p.is_riichi and not _is_riichi_kan_legal(p, kan_card):
+                logger.info("Illegal riichi kan by %s (card: %s) — deferred penalty set", player_id, kan_card)
+                p.has_illegal_kan = True
+
             if not p.kan(kan_card):
                 res = {player_id: {"message": f"too_few_cards_to_kan. ({kan_card})"}}
                 return res
@@ -408,6 +530,7 @@ class ChinitsuGame:
             public_info["card"] = kan_card
 
             rinshan_card = self.draw_from_rinshan(player_id)
+            self._sort_hand_if_enabled(player_id)
             # cancel ippatsu of all players after kan
             for _, pl in self._players.items():
                 pl.is_ippatsu = False
@@ -422,6 +545,8 @@ class ChinitsuGame:
                 return res
             try:
                 card = p.discard(card_idx, is_riichi=False)
+                if self.rules.get('sort_hand'):
+                    p.hand.sort()
                 public_info["card_idx"] = card_idx
                 public_info["card"] = card
                 res = {player_id: {"message": "ok", "hand": p.hand}}
@@ -439,7 +564,10 @@ class ChinitsuGame:
                 return res
             try:
                 card = p.discard(card_idx, is_riichi=True)
+                if self.rules.get('sort_hand'):
+                    p.hand.sort()
                 p.is_riichi = True
+                p.riichi_machi = set(get_tenpai_tiles(p.hand))  # save machi for later kan checks
                 if is_tenchii_tenpai:
                     p.is_daburu_riichi = True
                 p.riichi_turn = self.state.turn
@@ -514,6 +642,12 @@ class ChinitsuGame:
                 res = {player_id: {"message": f"incorrect_card_count: {p.len_hand} + {p.num_fuuro} fuuros"}}
                 return res
 
+            # Deferred chombo: illegal riichi kan detected earlier — treat as false agari
+            if p.has_illegal_kan:
+                logger.info("Chombo: illegal riichi kan by %s — applying penalty on tsumo", player_id)
+                res = process_agari(HandResponse(error="illegal_kan_chombo"), is_tsumo=True, is_oya=p.is_oya)
+                return res
+
             agari_condition = {
                 "is_tsumo" : True,
                 "is_riichi": p.is_riichi,
@@ -544,6 +678,12 @@ class ChinitsuGame:
                 res = {player_id: {"message": f"incorrect_card_count: {p.len_hand} + {p.num_fuuro} fuuros"}}
                 return res
 
+            # Deferred chombo: illegal riichi kan — treat as false agari
+            if p.has_illegal_kan:
+                logger.info("Chombo: illegal riichi kan by %s — applying penalty on ron", player_id)
+                res = process_agari(HandResponse(error="illegal_kan_chombo"), is_tsumo=False, is_oya=p.is_oya)
+                return res
+
             # Furiten checks — all three types block ron (tsumo is still allowed)
             if p.is_furiten or p.is_temp_furiten:
                 res = {player_id: {"message": "furiten"}}
@@ -572,7 +712,11 @@ class ChinitsuGame:
 
             }
 
-            agari = self.agari_judger.judge(p.hand + [opp.kawa[-1][0]], p.fuuro, opp.kawa[-1][0], **agari_condition)
+            ron_tile = opp.kawa[-1][0]
+            logger.debug("RON attempt: %s hand=%s fuuro=%s win=%s riichi=%s",
+                         player_id, p.hand, p.fuuro, ron_tile, p.is_riichi)
+            agari = self.agari_judger.judge(p.hand + [ron_tile], p.fuuro, ron_tile, **agari_condition)
+            logger.debug("RON result: han=%s error=%s", agari.han, agari.error)
             res = process_agari(agari, is_tsumo=False, is_oya=p.is_oya)
 
         # skip opponent turn (choose not to ron)
