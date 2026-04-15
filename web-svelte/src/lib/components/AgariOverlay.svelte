@@ -71,7 +71,11 @@
 			{:else}
 				<h2><span class="agari-fail">No Agari</span></h2>
 				<div id="agari-details">
-					<div>{result.isMe ? 'You' : 'Opponent'} declared but had no valid hand.</div>
+					{#if result.reason === 'furiten'}
+						<div style="color:var(--danger)">Furiten - Winning tile already in discard</div>
+					{:else}
+						<div>{result.isMe ? 'You' : 'Opponent'} declared but had no valid hand.</div>
+					{/if}
 					<div class="point-val" style="color:var(--danger)">{Math.abs(result.point).toLocaleString()} pts penalty</div>
 				</div>
 			{/if}

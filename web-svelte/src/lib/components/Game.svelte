@@ -35,6 +35,10 @@
 	});
 
 	function handleSelect(idx: number) {
+		// Riichi: can only discard the tile just drawn (last tile)
+		if (s.myRiichi && idx !== s.myHand.length - 1) {
+			return;
+		}
 		if (s.selectedIdx === idx) {
 			sendAction('discard', idx);
 			gameState.update((prev) => ({ ...prev, selectedIdx: null }));
@@ -140,7 +144,7 @@
 					>Kan</button>
 				{/if}
 			{/if}
-			{#if isMyTurn && s.turnStage === 'after_discard'}
+			{#if isMyTurn && s.turnStage === 'after_discard' && s.phase === 'playing'}
 				<button class="btn btn-ron" onclick={() => sendAction('ron')}>Ron (R)</button>
 				<button class="btn btn-action" onclick={() => sendAction('skip_ron')}>Skip (S)</button>
 			{/if}

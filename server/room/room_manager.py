@@ -880,6 +880,9 @@ class RoomManager:
                                     protocol.make_error(ERR_GAME_PAUSED))
             return
 
+        # DEBUG: 记录收到的 action
+        logger.info("[DEBUG] _handle_game_action: room=%s action=%s user=%s card_idx=%s", room_name, action, user_id, card_idx)
+
         # 调用游戏层处理
         try:
             result = game.input(action, card_idx, user_id)
@@ -891,6 +894,9 @@ class RoomManager:
 
         if not result:
             return
+
+        # DEBUG: 记录 game.input 返回结果
+        logger.info("[DEBUG] game.input result: %s", result)
 
         # 将 wall_count 注入到结果中（前端需要）
         wall_count = len(game.yama) if hasattr(game, 'yama') else 0

@@ -629,7 +629,8 @@ class ChinitsuGame:
                     "han": 0,
                     "fu": 0,
                     "point": -punishment,
-                    "yaku": None
+                    "yaku": None,
+                    "error": agari.error
                 })
             self.set_ended()
             return res
@@ -686,12 +687,12 @@ class ChinitsuGame:
 
             # Furiten checks — all three types block ron (tsumo is still allowed)
             if p.is_furiten or p.is_temp_furiten:
-                res = {player_id: {"message": "furiten"}}
+                res = process_agari(HandResponse(error="furiten"), is_tsumo=False, is_oya=p.is_oya)
                 return res
             tenpai_tiles = get_tenpai_tiles(p.hand, p.num_fuuro)
             kawa_cards = {k[0] for k in p.kawa}
             if any(t in kawa_cards for t in tenpai_tiles):
-                res = {player_id: {"message": "furiten"}}
+                res = process_agari(HandResponse(error="furiten"), is_tsumo=False, is_oya=p.is_oya)
                 return res
 
             agari_condition = {
