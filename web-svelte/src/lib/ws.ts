@@ -566,6 +566,7 @@ function handleMessage(data: Record<string, unknown>) {
 
 		// Agari result
 		if (data.agari !== undefined) {
+			console.log('[DEBUG] Agari result:', data);
 			s.phase = 'ended';
 			const isMe = actorId === myId;
 			agariResult.set({
@@ -577,6 +578,7 @@ function handleMessage(data: Record<string, unknown>) {
 				point: data.point as number,
 				yaku: data.yaku as string[] | undefined,
 				hand: (data.winner_hand as string[] | undefined) ?? (data.hand as string[] | undefined),
+				reason: data.error as string | undefined,
 				isMe
 			});
 		}

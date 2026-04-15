@@ -69,4 +69,5 @@ export interface AgariData {
 	yaku?: string[];
 	hand?: string[];
 	tenpai?: Record<string, TenpaiInfo>;
+	reason?: string;
 }
