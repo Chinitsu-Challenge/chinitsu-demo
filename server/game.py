@@ -686,14 +686,18 @@ class ChinitsuGame:
                 return res
 
             # Furiten checks — all three types block ron (tsumo is still allowed)
-            if p.is_furiten or p.is_temp_furiten:
-                res = process_agari(HandResponse(error="furiten"), is_tsumo=False, is_oya=p.is_oya)
-                return res
-            tenpai_tiles = get_tenpai_tiles(p.hand, p.num_fuuro)
-            kawa_cards = {k[0] for k in p.kawa}
-            if any(t in kawa_cards for t in tenpai_tiles):
-                res = process_agari(HandResponse(error="furiten"), is_tsumo=False, is_oya=p.is_oya)
-                return res
+            is_furiten = p.is_furiten or p.is_temp_furiten
+            if not is_furiten:
+                tenpai_tiles = get_tenpai_tiles(p.hand, p.num_fuuro)
+                kawa_cards = {k[0] for k in p.kawa}
+                if any(t in kawa_cards for t in tenpai_tiles):
+                    is_furiten = True
+
+            if is_furiten:
+                # Set furiten message for logging
+                logger.info("Furiten ron by %s - treating as false agari", player_id)
+                # Continue to normal ron flow below but will be treated as no-agari
+                # (don't return early, let process_agari at the end handle it)
 
             agari_condition = {
                 "is_tsumo" : False,
@@ -716,7 +720,11 @@ class ChinitsuGame:
             ron_tile = opp.kawa[-1][0]
             logger.debug("RON attempt: %s hand=%s fuuro=%s win=%s riichi=%s",
                          player_id, p.hand, p.fuuro, ron_tile, p.is_riichi)
-            agari = self.agari_judger.judge(p.hand + [ron_tile], p.fuuro, ron_tile, **agari_condition)
+            # If furiten, create a HandResponse with error instead of calling judge
+            if is_furiten:
+                agari = HandResponse(error="furiten")
+            else:
+                agari = self.agari_judger.judge(p.hand + [ron_tile], p.fuuro, ron_tile, **agari_condition)
             logger.debug("RON result: han=%s error=%s", agari.han, agari.error)
             res = process_agari(agari, is_tsumo=False, is_oya=p.is_oya)
 
