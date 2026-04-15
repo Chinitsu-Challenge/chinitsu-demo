@@ -347,6 +347,54 @@ class ChinitsuGame:
             raise ValueError(player_name)
         self._players[player_name].active = False
 
+    @classmethod
+    def from_snapshot(cls, snapshot: dict, rules: dict = None) -> "ChinitsuGame":
+        """
+        从快照字典重建 ChinitsuGame 对象，用于服务重启后恢复游戏状态。
+        快照必须包含 'yama' 字段（serialize_game 生成的新格式快照）。
+        """
+        game = cls(rules=rules)
+
+        players_data = snapshot.get("players", {})
+        player_ids = list(players_data.keys())
+
+        for pid in player_ids:
+            game.add_player(pid)
+            p = game._players[pid]
+            pdata = players_data[pid]
+
+            p.point             = pdata.get("point", 0)
+            p.is_oya            = pdata.get("is_oya", False)
+            p.is_riichi         = pdata.get("is_riichi", False)
+            p.is_daburu_riichi  = pdata.get("is_daburu_riichi", False)
+            p.riichi_turn       = pdata.get("riichi_turn")
+            p.is_ippatsu        = pdata.get("is_ippatsu", False)
+            p.is_rinshan        = pdata.get("is_rinshan", False)
+            p.is_furiten        = pdata.get("is_furiten", False)
+            p.is_temp_furiten   = pdata.get("is_temp_furiten", False)
+            p.hand   = list(pdata.get("hand", []))
+            p.fuuro  = [tuple(f) for f in pdata.get("fuuro", [])]
+            p.kawa   = [(k[0], k[1]) for k in pdata.get("kawa", [])]
+            p.num_kan = pdata.get("num_kan", 0)
+
+        game.yama             = list(snapshot["yama"])   # KeyError if absent → caller handles
+        game.kyoutaku_number  = snapshot.get("kyoutaku_number", 0)
+        game.tsumi_number     = snapshot.get("tsumi_number", 0)
+        game.next_oya         = snapshot.get("next_oya")
+
+        stage_map = {
+            "before_draw":  TurnState.BEFORE_DRAW,
+            "after_draw":   TurnState.AFTER_DRAW,
+            "after_discard": TurnState.AFTER_DISCARD,
+        }
+        game.state = TurnState(player_ids)
+        game.state.current_player = snapshot.get("current_player_id", player_ids[0] if player_ids else "")
+        game.state.turn  = snapshot.get("turn_number", 1)
+        game.state.stage = stage_map.get(snapshot.get("turn_stage", "before_draw"), TurnState.BEFORE_DRAW)
+
+        game.status = RUNNING
+        return game
+
     def remove_player(self, player_name: str):
         if self.is_running or self.is_reconnecting:
             raise AssertionError("Cannot remove player in game!")

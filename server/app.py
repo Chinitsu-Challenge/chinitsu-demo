@@ -20,6 +20,8 @@ from managers import ConnectionManager
 async def lifespan(_app: FastAPI):
     await init_db()
     await init_redis()
+    # 从 Redis 恢复上次服务进程中的活跃房间（断线重连、游戏继续）
+    await room_manager.startup_restore()
     yield
     await close_redis()
 
