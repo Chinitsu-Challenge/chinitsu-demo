@@ -40,6 +40,7 @@ export const wsError = writable<{ message: string } | null>(null);
 // --- In-game error toast (ERR_* server messages) ---
 export const errorToast = writable<{ message: string; id: number } | null>(null);
 
+
 // --- Spectator state ---
 export const isSpectator = writable(false);
 export const duplicateTab = writable(false); // true = 另一标签页已占用连接，当前 Tab 正在等待
@@ -610,6 +611,7 @@ function handleMessage(data: Record<string, unknown>) {
 		logMsg(`[error] ${code}${detail ? ': ' + detail : ''}`, 'error');
 		return;
 	}
+
 
 	if (data.event === 'player_left_ended') {
 		// 非房主玩家在 ENDED 状态离开，通知房主

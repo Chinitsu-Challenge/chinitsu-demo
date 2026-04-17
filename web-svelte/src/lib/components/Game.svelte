@@ -172,6 +172,15 @@
 
 	<EmotePopup />
 	<ChatBubble />
+
+	<!-- 房主解散房间后，非房主看到的 10 秒倒计时提示框 -->
+	{#if s.phase === 'room_dissolved'}
+		<RoomDissolvedOverlay />
+	{/if}
+
+	<!-- 非房主离开 ENDED 房间后，房主看到的小型提示通知 -->
+	<PlayerLeftNotification />
+
 	<MessageLog />
 
 	<!-- ERR_* 游戏错误提示（4 秒自动消失） -->
