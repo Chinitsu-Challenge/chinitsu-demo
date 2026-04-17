@@ -332,6 +332,12 @@ class RoomManager:
                     room_name,
                     protocol.make_player_joined(display_name, room_name, len(room.player_ids)),
                 )
+                # vs_bot 房间：重连后补发 CPU 加入通知，让前端还原 oppDisplayName
+                if room.vs_bot:
+                    await self.push.unicast(
+                        room_name, user_id,
+                        protocol.make_player_joined("CPU", room_name, len(room.player_ids)),
+                    )
                 logger.info("WAITING 中玩家重连 [%s] %s(%s)", room_name, display_name, user_id[:8])
                 return True
 
