@@ -114,7 +114,9 @@ class BotService:
                     await rm.push.unicast(room_name, target_id, info)
 
                 # 快照保存 + 比赛结束判断
-                await rm._post_action_bookkeeping(room, game)
+                await rm._post_action_bookkeeping(
+                    room, game, last_result=result if isinstance(result, dict) else None
+                )
 
                 if game.is_ended:
                     break

@@ -6,6 +6,8 @@
 	import Fuuro from './Fuuro.svelte';
 	import AgariOverlay from './AgariOverlay.svelte';
 	import MatchEndOverlay from './MatchEndOverlay.svelte';
+	import RoomDissolvedOverlay from './RoomDissolvedOverlay.svelte';
+	import PlayerLeftNotification from './PlayerLeftNotification.svelte';
 	import MessageLog from './MessageLog.svelte';
 	import { onMount } from 'svelte';
 
@@ -155,5 +157,14 @@
 		<AgariOverlay />
 	{/if}
 	<MatchEndOverlay />
+
+	<!-- 房主解散房间后，非房主看到的 10 秒倒计时提示框 -->
+	{#if s.phase === 'room_dissolved'}
+		<RoomDissolvedOverlay />
+	{/if}
+
+	<!-- 非房主离开 ENDED 房间后，房主看到的小型提示通知 -->
+	<PlayerLeftNotification />
+
 	<MessageLog />
 </div>

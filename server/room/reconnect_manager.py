@@ -82,10 +82,16 @@ class ReconnectManager:
         # 保存快照（确保断线前的最新状态，含真实昵称）
         game = self._rm.games.get(room_name)
         if game is not None:
+            # 先读取旧快照，保留 last_round_result 等不由 serialize_game 生成的瞬态字段
+            old_snapshot = self._rm.snapshot_mgr._memory_store.get(room_name, {})
             snapshot = self._rm.snapshot_mgr.serialize_game(
                 game, room_name, room.round_no, room.round_limit,
                 display_names=self._rm.get_display_names(room_name),
+                owner_id=room.owner_id,
             )
+            # serialize_game 不含瞬态结算数据，从旧快照中保留以便重连后恢复 AgariOverlay
+            if "last_round_result" in old_snapshot:
+                snapshot["last_round_result"] = old_snapshot["last_round_result"]
             await self._rm.snapshot_mgr.save_snapshot(room_name, snapshot)
 
         # 通知在线方
@@ -163,10 +169,22 @@ class ReconnectManager:
         ENDED 状态下断线：保留会话，仅标记离线。
         玩家仍留在房间中，重连后可继续对 continue/end 投票。
         不清空已有投票记录。
+        若双方均已断线，销毁房间（同 WAITING/RECONNECT 的处理逻辑）：
+        - 保留 ENDED 房间的意义是允许意外断线的玩家重连后继续投票；
+        - 若双方均已离线，说明双方都主动离开，无需保留旧 ENDED 状态，
+          下次进入同名房间时应创建全新房间，而非重连旧对局结算界面。
         """
+        room_name = room.room_name
         session.mark_offline()
         await self._rm._sync_session_to_redis(session)
-        logger.info("ENDED 中玩家断线，保留会话 [%s/%s]", room.room_name, session.user_id)
+        logger.info("ENDED 中玩家断线，保留会话 [%s/%s]", room_name, session.user_id)
+
+        # 若所有玩家均已离线 → 销毁房间，避免下次同名连接误入旧 ENDED 房间
+        online_ids = self._rm.push.get_online_user_ids(room_name)
+        if len(online_ids) == 0:
+            logger.info("ENDED 中双方均断线，销毁房间 [%s]", room_name)
+            await self._rm._do_transition(room, RoomEvent.ALL_LEFT)
+            await self._rm.cleanup_room(room_name, room.room_id, "all_left_ended")
 
     async def on_reconnect(self, ws, room_name: str, user_id: str, display_name: str) -> bool:
         """
@@ -210,6 +228,15 @@ class ReconnectManager:
         if snapshot:
             player_view = self._rm.snapshot_mgr.build_player_view(snapshot, user_id)
             await self._rm.push.unicast(room_name, user_id, player_view)
+            # 若本轮刚结束（未到 match_end），补发轮次结算事件让前端恢复 AgariOverlay
+            last_round_result = snapshot.get("last_round_result")
+            if last_round_result and not snapshot.get("match_result"):
+                player_result = last_round_result.get(user_id)
+                if player_result:
+                    msg = dict(player_result)
+                    msg["broadcast"] = False
+                    msg["event"] = "round_result_restore"
+                    await self._rm.push.unicast(room_name, user_id, msg)
 
         # 通知对手：对手已重连
         opponent_id = self._rm.push.get_opponent_id(room_name, user_id)

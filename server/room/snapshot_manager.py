@@ -31,6 +31,7 @@ class SnapshotManager:
         round_no: int = 0,
         round_limit: int = 8,
         display_names: dict[str, str] | None = None,
+        owner_id: str = "",
     ) -> dict:
         """
         从 ChinitsuGame 对象序列化出完整快照。
@@ -85,6 +86,7 @@ class SnapshotManager:
             "kyoutaku_number": game.kyoutaku_number,
             "tsumi_number": game.tsumi_number,
             "players": players_data,
+            "owner_id": owner_id,
             # 以下字段专用于服务重启后的游戏状态完整重建
             "yama": list(game.yama),
             "next_oya": getattr(game, 'next_oya', None),
@@ -149,6 +151,8 @@ class SnapshotManager:
         else:
             frontend_current_player = raw_current
 
+        is_owner = viewer_id == snapshot.get("owner_id", "")
+
         return {
             "event": "game_snapshot",
             "broadcast": False,
@@ -164,6 +168,7 @@ class SnapshotManager:
             "tsumi_number": snapshot.get("tsumi_number", 0),
             "me": me,
             "opponent": opponent,
+            "is_owner": is_owner,
         }
 
     @staticmethod
