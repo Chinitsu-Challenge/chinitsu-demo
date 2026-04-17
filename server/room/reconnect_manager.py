@@ -133,6 +133,8 @@ class ReconnectManager:
         WAITING 状态下断线。
         - 房间已满（2 人）：仅标记离线，保留会话，等待重连；清空开始投票。
         - 房间未满（1 人）：移除玩家；若房间为空则销毁。
+        注意：vs_bot 房间的 player_ids 含 BOT_ID（无 WS），get_online_user_ids 永远
+        不计 bot，因此人类断线后 online_ids == 0，但不应视为「双方均离线」而销毁房间。
         """
         room_name = room.room_name
         user_id = session.user_id
@@ -145,17 +147,18 @@ class ReconnectManager:
             # 开始投票需清空（断线方无法保持 ready 状态）
             self._rm.ready_svc.clear(room_name)
 
-            # 若双方均已断线 → 销毁房间（无意义继续保留）
             online_ids = self._rm.push.get_online_user_ids(room_name)
-            if len(online_ids) == 0:
+            if len(online_ids) == 0 and not room.vs_bot:
+                # 真实双人房间双方均离线 → 销毁
                 await self._rm._do_transition(room, RoomEvent.ALL_LEFT)
                 await self._rm.cleanup_room(room_name, room.room_id, "all_left")
-            else:
-                # 通知在线方
+            elif len(online_ids) > 0:
+                # 仍有真实玩家在线 → 通知对方
                 await self._rm.push.broadcast(
                     room_name,
                     protocol.make_player_left(display_name, room_name, len(room.player_ids)),
                 )
+            # else: vs_bot 且人类已离线，保留房间静默等待人类重连
         else:
             # 房间只有 1 人：直接移除
             self._rm._remove_player_from_room(room_name, user_id)
@@ -179,9 +182,10 @@ class ReconnectManager:
         await self._rm._sync_session_to_redis(session)
         logger.info("ENDED 中玩家断线，保留会话 [%s/%s]", room_name, session.user_id)
 
-        # 若所有玩家均已离线 → 销毁房间，避免下次同名连接误入旧 ENDED 房间
+        # 若所有真实玩家均已离线 → 销毁房间，避免下次同名连接误入旧 ENDED 房间。
+        # vs_bot 房间：bot 无 WS，online_ids 永远不含 bot，不应误判为「双方均离线」。
         online_ids = self._rm.push.get_online_user_ids(room_name)
-        if len(online_ids) == 0:
+        if len(online_ids) == 0 and not room.vs_bot:
             logger.info("ENDED 中双方均断线，销毁房间 [%s]", room_name)
             await self._rm._do_transition(room, RoomEvent.ALL_LEFT)
             await self._rm.cleanup_room(room_name, room.room_id, "all_left_ended")
