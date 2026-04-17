@@ -13,6 +13,8 @@
 	import ErrorToast from './ErrorToast.svelte';
 	import EmotePopup from './EmotePopup.svelte';
 	import ChatBubble from './ChatBubble.svelte';
+	import ConnectionErrorOverlay from './ConnectionErrorOverlay.svelte';
+	import ErrorToast from './ErrorToast.svelte';
 	import { onMount } from 'svelte';
 
 	let s = $derived($gameState);
