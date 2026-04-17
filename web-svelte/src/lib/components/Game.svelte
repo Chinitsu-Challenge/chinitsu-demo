@@ -9,6 +9,8 @@
 	import RoomDissolvedOverlay from './RoomDissolvedOverlay.svelte';
 	import PlayerLeftNotification from './PlayerLeftNotification.svelte';
 	import MessageLog from './MessageLog.svelte';
+	import ConnectionErrorOverlay from './ConnectionErrorOverlay.svelte';
+	import ErrorToast from './ErrorToast.svelte';
 	import { onMount } from 'svelte';
 
 	let s = $derived($gameState);
@@ -167,4 +169,10 @@
 	<PlayerLeftNotification />
 
 	<MessageLog />
+
+	<!-- ERR_* 游戏错误提示（4 秒自动消失） -->
+	<ErrorToast />
+
+	<!-- 全局兜底：WS 意外断连 / watchdog 超时，z-index 最高 -->
+	<ConnectionErrorOverlay />
 </div>

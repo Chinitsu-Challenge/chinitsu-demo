@@ -33,6 +33,12 @@ export const isOwner = writable(false);
 // --- Player-left notification (shown to host when non-host leaves in ENDED) ---
 export const playerLeftNotif = writable<{ displayName: string } | null>(null);
 
+// --- Connection error overlay (post-connection unexpected WS close / watchdog) ---
+export const wsError = writable<{ message: string } | null>(null);
+
+// --- In-game error toast (ERR_* server messages) ---
+export const errorToast = writable<{ message: string; id: number } | null>(null);
+
 // --- Spectator state ---
 export const isSpectator = writable(false);
 export const duplicateTab = writable(false); // true = 另一标签页已占用连接，当前 Tab 正在等待
@@ -121,6 +127,55 @@ function stopWatchingHeartbeat() {
 	_rxChannel?.close();
 	_rxChannel = null;
 }
+
+// --- Watchdog: detect silent hangs during gameplay ---
+// If no WS message arrives for WATCHDOG_MS while in 'playing' phase,
+// the connection is likely dead (TCP keepalive didn't catch it). Show the error overlay.
+const WATCHDOG_MS = 60_000;
+let _watchdogTimer: ReturnType<typeof setTimeout> | null = null;
+// Suppress watchdog while we know the opponent is reconnecting (up to 120s server timeout).
+let _opponentDisconnected = false;
+
+function resetWatchdog() {
+	if (_watchdogTimer !== null) clearTimeout(_watchdogTimer);
+	_watchdogTimer = setTimeout(() => {
+		if (get(gameState).phase === 'playing' && !_opponentDisconnected) {
+			wsError.set({ message: '长时间未收到服务器消息，连接可能已中断。\n请返回大厅重新连接。' });
+		}
+	}, WATCHDOG_MS);
+}
+
+function stopWatchdog() {
+	if (_watchdogTimer !== null) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
+}
+
+// --- WS close reason → user-friendly message ---
+function mapCloseReason(code: number, reason: string): string {
+	if (reason === 'room_expired')       return '房间已过期（超过 40 分钟未活动）。';
+	if (reason === 'room_closed')        return '房间已被关闭。';
+	if (reason === 'invalid_room_name')  return '房间不存在或名称非法。';
+	if (reason === 'already_in_room')    return '你已在其他房间中，请刷新页面。';
+	if (code === 1001)                   return '服务器已关闭该房间。';
+	if (code === 1008)                   return '登录已过期，请重新登录后再试。';
+	if (code === 1006)                   return '网络连接意外中断。';
+	return '与服务器的连接已断开，请返回大厅重新连接。';
+}
+
+// --- ERR_* server code → user-friendly message ---
+function mapErrorCode(code: string, detail?: string): string {
+	const msgs: Record<string, string> = {
+		game_paused:               '对手正在重连，操作已暂停',
+		game_not_started:          '游戏尚未开始',
+		game_ended:                '当前轮已结束',
+		not_enough_players:        '需要对手加入才能开始',
+		round_not_ended:           '当前轮尚未结束',
+		unknown_action:            '无效操作',
+		game_error:                `游戏发生错误${detail ? '：' + detail : '，请重试'}`,
+		spectator_action_forbidden:'旁观者无法进行游戏操作',
+	};
+	return msgs[code] ?? `操作被拒绝：${code}`;
+}
+
 export let oppId = '';
 export let myDisplayName = '';
 export let oppDisplayName = '';
@@ -212,6 +267,9 @@ export function connect(
 			duplicateTab.set(false);
 			// Full reset — clears all stale game state from previous sessions.
 			// game_snapshot / player_joined will restore the correct values if reconnecting.
+			wsError.set(null);
+			_opponentDisconnected = false;
+			resetWatchdog();
 			isSpectator.set(false);
 			isOwner.set(false);
 			playerLeftNotif.set(null);
@@ -244,44 +302,53 @@ export function connect(
 		};
 
 		ws.onmessage = ({ data }) => {
+			resetWatchdog(); // any message from server resets the silence timer
 			handleMessage(JSON.parse(data));
 		};
 
 		ws.onclose = (event) => {
 			clearTimeout(timeout);
-			if (event.code === 1008) {
-				done({ ok: false, reason: 'Authentication failed. Please login again.' });
-			} else if (event.code === 1003) {
-				if (event.reason === 'duplicate_id') {
-					duplicateTab.set(true);
-					startWatchingHeartbeat();
-					done({ ok: false, reason: 'duplicate_id' });
-					return;
+			stopWatchdog();
+			stopSendingHeartbeat();
+
+			const phase = get(gameState).phase;
+
+			// ── 初次连接阶段（Promise 未 resolve）─────────────────────────────
+			// done() 内部有 resolved 保护，多次调用安全
+			if (!resolved) {
+				if (event.code === 1008) {
+					done({ ok: false, reason: 'Authentication failed. Please login again.' });
+				} else if (event.code === 1003) {
+					if (event.reason === 'duplicate_id') {
+						duplicateTab.set(true);
+						startWatchingHeartbeat();
+						done({ ok: false, reason: 'duplicate_id' });
+						return;
+					}
+					const reason =
+						event.reason === 'room_full'         ? 'Room is full!'
+						: event.reason === 'spectator_room_full' ? 'Spectator seats are full (max 10).'
+						: event.reason === 'already_in_room'     ? 'You are already in another room.'
+						: 'Connection refused.';
+					done({ ok: false, reason });
+				} else {
+					done({ ok: false, reason: 'Connection failed.' });
 				}
-				const reason =
-					event.reason === 'room_full'
-						? 'Room is full!'
-						: event.reason === 'spectator_room_full'
-							? 'Spectator seats are full (max 10).'
-							: event.reason === 'already_in_room'
-								? 'You are already in another room.'
-								: 'Connection refused.';
-				done({ ok: false, reason });
-			} else {
-				stopSendingHeartbeat();
-				// room_dissolved 阶段：WS 由服务端 cleanup_room 关闭，
-				// 但前端正在显示 10 秒倒计时提示框，不应立即跳转大厅。
-				// RoomDissolvedOverlay 的倒计时/退出按钮会负责后续导航。
-				if (get(gameState).phase === 'room_dissolved') {
-					done({ ok: false, reason: 'room_dissolved' });
-					return;
-				}
-				done({ ok: false, reason: 'Disconnected from server.' });
+				return;
 			}
+
+			// ── 游戏进行中断连（Promise 已 resolve）─────────────────────────
+			// 以下两种 phase 已有专属 UI 处理，不显示通用错误 overlay
+			if (phase === 'lobby')          return; // room_closed / leave_room 事件已导航
+			if (phase === 'room_dissolved') return; // RoomDissolvedOverlay 负责倒计时
+
+			// 其他所有情况：玩家在游戏中意外断连，显示连接错误 overlay
+			wsError.set({ message: mapCloseReason(event.code, event.reason) });
 		};
 
 		ws.onerror = () => {
 			clearTimeout(timeout);
+			stopWatchdog();
 			stopSendingHeartbeat();
 			done({ ok: false, reason: 'Connection failed.' });
 		};
@@ -343,6 +410,7 @@ function handleBroadcastEvent(data: Record<string, unknown>) {
 	}
 
 	if (event === 'reconnect_timeout') {
+		_opponentDisconnected = false; // reconnect window has closed
 		const winnerId = data.winner_id as string;
 		const isWinner = winnerId === myId;
 		logMsg(
@@ -493,12 +561,23 @@ function handleMessage(data: Record<string, unknown>) {
 	}
 
 	if (data.event === 'opponent_disconnected') {
+		_opponentDisconnected = true; // suppress watchdog during 120s reconnect window
 		logMsg('Opponent disconnected. Waiting for reconnect...', 'broadcast');
 		return;
 	}
 
 	if (data.event === 'opponent_reconnected') {
+		_opponentDisconnected = false;
 		logMsg('Opponent reconnected!', 'broadcast');
+		return;
+	}
+
+	if (data.event === 'error') {
+		const code = data.code as string;
+		const detail = data.detail as string | undefined;
+		errorToast.set({ message: mapErrorCode(code, detail), id: Date.now() });
+		// Still log for debug visibility
+		logMsg(`[error] ${code}${detail ? ': ' + detail : ''}`, 'error');
 		return;
 	}
 
