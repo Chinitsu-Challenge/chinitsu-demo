@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 import type { GameState, AgariData, KawaEntry, SpectatorState, SpectatorPlayerData } from './types';
 import { getToken, getUuid, getUsername } from './auth';
 
@@ -26,6 +26,12 @@ export const gameState = writable<GameState>({
 
 export const logs = writable<{ text: string; type: string }[]>([]);
 export const agariResult = writable<(AgariData & { isMe: boolean }) | null>(null);
+
+// --- Room ownership ---
+export const isOwner = writable(false);
+
+// --- Player-left notification (shown to host when non-host leaves in ENDED) ---
+export const playerLeftNotif = writable<{ displayName: string } | null>(null);
 
 // --- Spectator state ---
 export const isSpectator = writable(false);
@@ -204,10 +210,35 @@ export function connect(
 			stopWatchingHeartbeat();
 			startSendingHeartbeat(roomName);
 			duplicateTab.set(false);
-			// Reset spectator state on every new connection
+			// Full reset — clears all stale game state from previous sessions.
+			// game_snapshot / player_joined will restore the correct values if reconnecting.
 			isSpectator.set(false);
+			isOwner.set(false);
+			playerLeftNotif.set(null);
+			agariResult.set(null);
+			oppId = '';
+			oppDisplayName = '';
+			gameState.set({
+				phase: 'waiting',
+				myHand: [],
+				myIsOya: false,
+				myPoints: 150000,
+				oppPoints: 150000,
+				myRiichi: false,
+				oppRiichi: false,
+				myKawa: [],
+				oppKawa: [],
+				myFuuro: [],
+				oppFuuro: [],
+				currentPlayer: null,
+				turnStage: null,
+				selectedIdx: null,
+				wallCount: 36,
+				kyoutaku: 0,
+				oppDisplayName: '',
+				matchResult: null,
+			});
 			spectatorState.update((s) => ({ ...s, phase: 'lobby', players: {} }));
-			gameState.update((s) => ({ ...s, phase: 'waiting' }));
 			logMsg('Connected to room: ' + roomName, 'broadcast');
 			done({ ok: true });
 		};
@@ -238,6 +269,13 @@ export function connect(
 				done({ ok: false, reason });
 			} else {
 				stopSendingHeartbeat();
+				// room_dissolved 阶段：WS 由服务端 cleanup_room 关闭，
+				// 但前端正在显示 10 秒倒计时提示框，不应立即跳转大厅。
+				// RoomDissolvedOverlay 的倒计时/退出按钮会负责后续导航。
+				if (get(gameState).phase === 'room_dissolved') {
+					done({ ok: false, reason: 'room_dissolved' });
+					return;
+				}
 				done({ ok: false, reason: 'Disconnected from server.' });
 			}
 		};
@@ -322,6 +360,12 @@ function handleBroadcastEvent(data: Record<string, unknown>) {
 		return;
 	}
 
+	if (event === 'room_dissolved') {
+		// 房主解散了房间，非房主看到 10 秒倒计时提示框
+		gameState.update((s) => ({ ...s, phase: 'room_dissolved' }));
+		return;
+	}
+
 	if (event === 'spectator_joined') {
 		const count = data.spectator_count as number;
 		spectatorState.update((s) => ({ ...s, spectatorCount: count }));
@@ -395,6 +439,8 @@ function handleMessage(data: Record<string, unknown>) {
 
 	// 1. Reconnect snapshot — restore full game state
 	if (data.event === 'game_snapshot') {
+		// Restore owner status (server derives it from snapshot.owner_id)
+		if (data.is_owner !== undefined) isOwner.set(data.is_owner as boolean);
 		const me = data.me as Record<string, unknown>;
 		const opp = data.opponent as Record<string, unknown>;
 		if (data.opponent_id) oppId = data.opponent_id as string;
@@ -440,6 +486,12 @@ function handleMessage(data: Record<string, unknown>) {
 	}
 
 	// 3. Non-broadcast protocol events (unicast, no action field)
+	if (data.event === 'room_created') {
+		// 记录当前用户是否为房主（仅创建者收到此消息，且 is_owner: true）
+		if (data.is_owner) isOwner.set(true);
+		return;
+	}
+
 	if (data.event === 'opponent_disconnected') {
 		logMsg('Opponent disconnected. Waiting for reconnect...', 'broadcast');
 		return;
@@ -447,6 +499,49 @@ function handleMessage(data: Record<string, unknown>) {
 
 	if (data.event === 'opponent_reconnected') {
 		logMsg('Opponent reconnected!', 'broadcast');
+		return;
+	}
+
+	if (data.event === 'player_left_ended') {
+		// 非房主玩家在 ENDED 状态离开，通知房主
+		const displayName = data.display_name as string;
+		// 切换到 waiting 状态（房间已回到 WAITING，等待新玩家加入）
+		agariResult.set(null);
+		gameState.update((s) => ({ ...s, phase: 'waiting', matchResult: null }));
+		// 展示小型提示框（自动 10 秒消失）
+		playerLeftNotif.set({ displayName });
+		return;
+	}
+
+	if (data.event === 'round_result_restore') {
+		// 重连后恢复轮次结算画面（round ended but match not yet over）
+		const action = data.action as string;
+		const actorId = data.player_id as string;
+		gameState.update((s) => ({ ...s, phase: 'ended' }));
+		if (data.agari !== undefined) {
+			const isMe = actorId === myId;
+			agariResult.set({
+				agari: data.agari as boolean,
+				action,
+				player_id: actorId,
+				han: data.han as number | undefined,
+				fu: data.fu as number | undefined,
+				point: data.point as number,
+				yaku: data.yaku as string[] | undefined,
+				hand: (data.winner_hand as string[] | undefined) ?? (data.hand as string[] | undefined),
+				reason: data.error as string | undefined,
+				isMe
+			});
+		} else if (data.ryukyoku) {
+			agariResult.set({
+				agari: false,
+				action: 'ryukyoku',
+				player_id: actorId,
+				point: 0,
+				tenpai: data.tenpai as Record<string, { is_tenpai: boolean; hand: string[] }>,
+				isMe: false
+			});
+		}
 		return;
 	}
 

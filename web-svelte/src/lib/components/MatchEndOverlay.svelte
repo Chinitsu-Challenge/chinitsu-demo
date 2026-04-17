@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { gameState, agariResult, sendAction, getMyId, getOppId, getMyDisplayName } from '$lib/ws';
+	import { gameState, agariResult, sendAction, getMyId, getOppId, getMyDisplayName, isOwner } from '$lib/ws';
 
 	let s = $derived($gameState);
 	let result = $derived(s.matchResult);
 	let myId = $derived(getMyId());
 	let oppId = $derived(getOppId());
+	let amOwner = $derived($isOwner);
 
 	let isWinner = $derived(result?.winnerId === myId);
 	let isDraw   = $derived(result !== null && result.winnerId === null);
@@ -21,11 +22,20 @@
 
 	function playAgain() {
 		agariResult.set(null);
-		sendAction('start_new');
+		sendAction('continue_game');
 	}
 
-	function returnToLobby() {
+	/** 房主：解散房间 → 广播倒计时给对手，自身返回大厅 */
+	function dissolveRoom() {
 		sendAction('end_game');
+	}
+
+	/** 非房主：静默离开，房间保留，房主等待新人加入 */
+	function leaveRoom() {
+		// 乐观更新：立即跳转大厅，服务端随后会关闭 WS
+		agariResult.set(null);
+		gameState.update((s) => ({ ...s, phase: 'lobby', matchResult: null }));
+		sendAction('leave_room');
 	}
 </script>
 
@@ -55,8 +65,19 @@
 
 			<div class="btn-row">
 				<button class="btn btn-primary" onclick={playAgain}>再来一局</button>
-				<button class="btn btn-secondary" onclick={returnToLobby}>返回大厅</button>
+
+				{#if amOwner}
+					<!-- 房主：解散房间（对手看到倒计时提示框） -->
+					<button class="btn btn-dissolve" onclick={dissolveRoom}>解散房间</button>
+				{:else}
+					<!-- 非房主：静默离开，房间留给房主等待新人 -->
+					<button class="btn btn-secondary" onclick={leaveRoom}>返回大厅</button>
+				{/if}
 			</div>
+
+			{#if amOwner}
+				<p class="owner-hint">解散房间后，对手将收到 10 秒倒计时提示</p>
+			{/if}
 		</div>
 	</div>
 {/if}
@@ -114,18 +135,14 @@
 		gap: 2rem;
 	}
 
-	.score-name {
-		text-align: left;
-	}
+	.score-name { text-align: left; }
 
 	.score-val {
 		font-weight: 600;
 		font-variant-numeric: tabular-nums;
 	}
 
-	.score-val.negative {
-		color: #e53935;
-	}
+	.score-val.negative { color: #e53935; }
 
 	.btn-row {
 		display: flex;
@@ -148,5 +165,29 @@
 	.btn-secondary:hover {
 		border-color: #aaa;
 		color: #eee;
+	}
+
+	.btn-dissolve {
+		background: transparent;
+		border: 1px solid #c0392b;
+		color: #e57373;
+		padding: 0.5rem 1.1rem;
+		border-radius: 6px;
+		cursor: pointer;
+		font-size: 0.95rem;
+		transition: background 0.15s, border-color 0.15s, color 0.15s;
+	}
+
+	.btn-dissolve:hover {
+		background: #c0392b22;
+		border-color: #e57373;
+		color: #ff8a80;
+	}
+
+	.owner-hint {
+		margin: -0.4rem 0 0;
+		font-size: 0.74rem;
+		color: #556;
+		line-height: 1.4;
 	}
 </style>

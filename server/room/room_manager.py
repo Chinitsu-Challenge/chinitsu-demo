@@ -302,6 +302,18 @@ class RoomManager:
                 if snapshot:
                     player_view = self.snapshot_mgr.build_player_view(snapshot, user_id)
                     await self.push.unicast(room_name, user_id, player_view)
+                    # 恢复结算界面：补发 match_ended 事件（内含 matchResult）。
+                    # 仅靠 game_snapshot 前端只会还原 phase='ended'，
+                    # 但 matchResult 为 null → MatchEndOverlay 不显示。
+                    match_result = snapshot.get("match_result")
+                    if match_result:
+                        await self.push.unicast(room_name, user_id, {
+                            "broadcast": True,
+                            "event": "match_ended",
+                            "reason": match_result.get("reason", ""),
+                            "final_scores": match_result.get("final_scores", {}),
+                            "winner_id": match_result.get("winner_id"),
+                        })
                 logger.info("ENDED 中玩家重连 [%s] %s(%s)", room_name, display_name, user_id[:8])
                 return True
 
@@ -341,6 +353,15 @@ class RoomManager:
                 if snapshot:
                     player_view = self.snapshot_mgr.build_player_view(snapshot, user_id)
                     await self.push.unicast(room_name, user_id, player_view)
+                    # 若本轮刚结束（未到 match_end），补发轮次结算事件
+                    last_round_result = snapshot.get("last_round_result")
+                    if last_round_result and not snapshot.get("match_result"):
+                        player_result = last_round_result.get(user_id)
+                        if player_result:
+                            msg = dict(player_result)
+                            msg["broadcast"] = False
+                            msg["event"] = "round_result_restore"
+                            await self.push.unicast(room_name, user_id, msg)
                 logger.info("RUNNING 竞态重连 [%s] %s(%s)", room_name, display_name, user_id[:8])
                 return True
 
@@ -468,7 +489,9 @@ class RoomManager:
             elif action == "end_game":
                 await self._handle_end_game(room, user_id)
             elif action == "leave_room":
-                await self._handle_leave_room(room, user_id)
+                # 非房主"返回大厅"：离开房间，房间保留等待新玩家
+                # 房主"返回大厅"（异常情况）：内部转为解散房间处理
+                await self._handle_leave_ended(room, user_id)
             elif action in ("start", "start_new"):
                 # 兼容：在 ENDED 中把 start_new 映射为 continue_game
                 await self._handle_continue_game(room, user_id)
@@ -823,14 +846,24 @@ class RoomManager:
         logger.info("双方选择继续，房间回到 WAITING [%s]", room_name)
 
     async def _handle_end_game(self, room: Room, user_id: str) -> None:
-        """ENDED 中处理 end_game → 直接销毁房间"""
+        """
+        ENDED 中处理 end_game（房主解散房间）。
+        - 调用方（房主）：收到 room_closed 事件，立即返回大厅。
+        - 对手（非房主）：收到 room_dissolved 事件，展示 10 秒倒计时提示框后返回大厅。
+        """
         room_name = room.room_name
         session = self.get_session(room_name, user_id)
         display_name = session.display_name if session else user_id
 
-        logger.info("玩家 %s 选择结束游戏 [%s]", display_name, room_name)
+        logger.info("玩家 %s 解散房间 [%s]", display_name, room_name)
 
-        await self.push.broadcast(room_name, protocol.make_room_closed("player_end_game"))
+        # 向对手发送"房间已解散"通知（含 10 秒倒计时提示框）
+        opponent_id = self.push.get_opponent_id(room_name, user_id)
+        if opponent_id:
+            await self.push.unicast(room_name, opponent_id, protocol.make_room_dissolved())
+
+        # 向调用方发送普通关闭通知，立即返回大厅
+        await self.push.unicast(room_name, user_id, protocol.make_room_closed("player_end_game"))
 
         try:
             await self._do_transition(room, RoomEvent.ANY_END_GAME)
@@ -838,6 +871,58 @@ class RoomManager:
             pass
 
         await self.cleanup_room(room_name, room.room_id, "end_game")
+
+    async def _handle_leave_ended(self, room: Room, user_id: str) -> None:
+        """
+        ENDED 中非房主玩家选择"返回大厅"：
+        - 从房间移除该玩家（session + player_ids）
+        - 房间回到 WAITING，等待新玩家加入
+        - 向房主推送 player_left_ended 通知
+        - 关闭该玩家的 WebSocket → 前端自动返回大厅
+
+        若调用方为房主，则转为 end_game 处理（解散房间）。
+        """
+        room_name = room.room_name
+        session = self.get_session(room_name, user_id)
+        display_name = session.display_name if session else user_id
+
+        # 房主点了"返回大厅"（正常情况不应发生，按解散处理）
+        if user_id == room.owner_id:
+            await self._handle_end_game(room, user_id)
+            return
+
+        host_id = room.owner_id
+        logger.info("非房主玩家 %s 离开 ENDED 房间 [%s]", display_name, room_name)
+
+        # 清除投票状态
+        self.end_svc.clear(room_name)
+        self.ready_svc.clear(room_name)
+
+        # 从房间移除（player_ids + session）
+        self._remove_player_from_room(room_name, user_id)
+
+        # 房间回到 WAITING（复用 BOTH_CONTINUE 转移）
+        try:
+            await self._do_transition(room, RoomEvent.BOTH_CONTINUE)
+        except InvalidTransitionError:
+            return
+
+        # 重置比赛状态
+        room.round_no = 0
+        if room_name in self.games:
+            del self.games[room_name]
+
+        await self._sync_room_to_redis(room)
+
+        # 向房主推送通知："xxx 已离开房间"
+        await self.push.unicast(room_name, host_id, protocol.make_player_left_ended(display_name))
+
+        # 关闭该玩家连接 → 前端收到 WS close 后返回大厅
+        if session and session.ws:
+            try:
+                await session.ws.close(code=1000, reason="leave_room")
+            except Exception:
+                pass
 
     async def _handle_leave_room(self, room: Room, user_id: str) -> None:
         """处理 leave_room：断开该玩家的连接"""
@@ -908,17 +993,21 @@ class RoomManager:
             await self.push.unicast(room_name, target_id, info)
 
         # ── 游戏后续处理 ──────────────────────────
-        await self._post_action_bookkeeping(room, game)
+        await self._post_action_bookkeeping(
+            room, game, last_result=result if isinstance(result, dict) else None
+        )
 
         # vs_bot：若游戏仍在运行，调度 bot 继续行动
         if room.vs_bot and not game.is_ended:
             self.bot_svc.schedule(room_name)
 
-    async def _post_action_bookkeeping(self, room: Room, game: "ChinitsuGame") -> None:
+    async def _post_action_bookkeeping(
+        self, room: Room, game: "ChinitsuGame", last_result: dict | None = None
+    ) -> None:
         """
         每次游戏层 action 处理完毕后的公共后置逻辑：
         1. 若本轮刚结束，增加轮次计数
-        2. 保存快照
+        2. 保存快照（若本轮结束且有 last_result，写入 last_round_result 供断线重连恢复）
         3. 若本轮结束，评估比赛是否应该终止
         由 _handle_game_action 和 BotService._run_chain 共同调用。
         """
@@ -933,7 +1022,10 @@ class RoomManager:
         snapshot = self.snapshot_mgr.serialize_game(
             game, room_name, room.round_no, room.round_limit,
             display_names=self.get_display_names(room_name),
+            owner_id=room.owner_id,
         )
+        if round_just_ended and last_result:
+            snapshot["last_round_result"] = last_result
         await self.snapshot_mgr.save_snapshot(room_name, snapshot)
         await self._push_spectator_update(room_name, snapshot)
 
@@ -968,6 +1060,14 @@ class RoomManager:
 
         # 广播比赛结束
         await self.push.broadcast(room_name, protocol.make_match_ended(reason, final_scores, winner_id))
+
+        # 将比赛结果写入快照，供断线重连时恢复结算界面
+        snapshot["match_result"] = {
+            "reason": reason,
+            "final_scores": final_scores,
+            "winner_id": winner_id,
+        }
+        await self.snapshot_mgr.save_snapshot(room_name, snapshot)
 
         logger.info("比赛结束 [%s] 原因=%s 分数=%s", room_name, reason, final_scores)
 
@@ -1010,6 +1110,7 @@ class RoomManager:
         snapshot = self.snapshot_mgr.serialize_game(
             game, room_name, room.round_no, room.round_limit,
             display_names=self.get_display_names(room_name),
+            owner_id=room.owner_id,
         )
         await self.snapshot_mgr.save_snapshot(room_name, snapshot)
         await self._push_spectator_update(room_name, snapshot)
@@ -1039,6 +1140,7 @@ class RoomManager:
         snapshot = self.snapshot_mgr.serialize_game(
             game, room_name, room.round_no, room.round_limit,
             display_names=self.get_display_names(room_name),
+            owner_id=room.owner_id,
         )
         await self.snapshot_mgr.save_snapshot(room_name, snapshot)
         await self._push_spectator_update(room_name, snapshot)

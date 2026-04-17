@@ -134,6 +134,31 @@ def make_auto_action(action: str) -> dict:
     }
 
 
+# ── ENDED 阶段离开类事件 ────────────────────────────────────────
+
+def make_room_dissolved() -> dict:
+    """
+    房主解散房间通知（单播给对手）。
+    frontend: 对手收到后展示 10 秒倒计时提示框，到期自动返回大厅。
+    """
+    return {
+        "broadcast": True,
+        "event": "room_dissolved",
+    }
+
+
+def make_player_left_ended(display_name: str) -> dict:
+    """
+    非房主玩家在 ENDED 状态选择"返回大厅"后，通知房主的单播消息。
+    frontend: 房主收到后展示小型提示框"xxx 已离开房间"，10 秒后自动消失。
+    """
+    return {
+        "broadcast": False,
+        "event": "player_left_ended",
+        "display_name": display_name,
+    }
+
+
 # ── 旁观者类事件 ────────────────────────────────────────────────
 
 def make_spectator_joined(display_name: str, spectator_count: int) -> dict:
