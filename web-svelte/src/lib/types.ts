@@ -10,7 +10,7 @@ export interface MatchResult {
 }
 
 export interface GameState {
-	phase: 'lobby' | 'waiting' | 'playing' | 'ended' | 'waiting_new_game';
+	phase: 'lobby' | 'waiting' | 'playing' | 'ended' | 'waiting_new_game' | 'room_dissolved';
 	myHand: string[];
 	myIsOya: boolean;
 	myPoints: number;
