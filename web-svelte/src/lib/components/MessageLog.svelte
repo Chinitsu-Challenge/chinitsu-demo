@@ -1,10 +1,30 @@
 <script lang="ts">
 	import { logs, sendChat, sendEmote } from '$lib/ws';
-	import { EMOTES } from '$lib/chat';
+	import { emoteConfig, type EmoteSeries } from '$lib/chat';
+	import { onMount } from 'svelte';
 
 	let open = $state(false);
 	let inputText = $state('');
 	let showEmotes = $state(false);
+
+	// Pagination
+	let currentSeriesIdx = $state(0);
+	let currentPage = $state(0);
+	const PER_PAGE = 12;
+
+	let config = $derived($emoteConfig);
+	let seriesList = $derived(config?.series ?? []);
+	let currentSeries = $derived(seriesList[currentSeriesIdx] ?? null);
+	let totalPages = $derived(currentSeries ? Math.ceil(currentSeries.emotes.length / PER_PAGE) : 0);
+	let paginatedEmotes = $derived(
+		currentSeries
+			? currentSeries.emotes.slice(currentPage * PER_PAGE, (currentPage + 1) * PER_PAGE)
+			: []
+	);
+
+	onMount(() => {
+		import('$lib/chat').then(m => m.loadEmoteConfig());
+	});
 
 	function submit() {
 		const text = inputText.trim();
@@ -18,8 +38,24 @@
 			e.preventDefault();
 			submit();
 		}
-		// prevent game hotkeys (d/t/r/s) from firing while typing
 		e.stopPropagation();
+	}
+
+	function selectSeries(idx: number) {
+		currentSeriesIdx = idx;
+		currentPage = 0;
+	}
+
+	function nextPage() {
+		if (currentPage < totalPages - 1) currentPage++;
+	}
+
+	function prevPage() {
+		if (currentPage > 0) currentPage--;
+	}
+
+	function sendAndClose(emoteId: string) {
+		sendEmote(emoteId);
 	}
 </script>
 
@@ -55,14 +91,40 @@
 		</div>
 	{/if}
 
-	{#if showEmotes}
-		<div class="emote-grid">
-			{#each Object.entries(EMOTES) as [id, def]}
-				<button class="emote-btn" onclick={() => sendEmote(id)} title={def.label}>
-					<img src={def.src} alt={def.label} class="emote-thumb" />
+	{#if showEmotes && config}
+		<!-- Series tabs -->
+		<div class="series-tabs">
+			{#each seriesList as series, idx}
+				<button
+					class="series-tab"
+					class:active={idx === currentSeriesIdx}
+					onclick={() => selectSeries(idx)}
+				>
+					{series.name}
 				</button>
 			{/each}
 		</div>
+
+		<!-- Emote grid with pagination -->
+		{#if currentSeries}
+			<div class="emote-panel">
+				<div class="emote-grid">
+					{#each paginatedEmotes as emote}
+						<button class="emote-btn" onclick={() => sendAndClose(emote.id)} title={emote.label}>
+							<img src={emote.src} alt={emote.label} class="emote-thumb" />
+						</button>
+					{/each}
+				</div>
+
+				{#if totalPages > 1}
+					<div class="pagination">
+						<button class="page-btn" onclick={prevPage} disabled={currentPage === 0}>◀</button>
+						<span class="page-info">{currentPage + 1} / {totalPages}</span>
+						<button class="page-btn" onclick={nextPage} disabled={currentPage >= totalPages - 1}>▶</button>
+					</div>
+				{/if}
+			</div>
+		{/if}
 	{/if}
 </div>
 
@@ -175,16 +237,51 @@
 		background: rgba(255, 255, 255, 0.18);
 	}
 
-	/* Emote grid */
-	.emote-grid {
-		display: grid;
-		grid-template-columns: repeat(3, 1fr);
-		gap: 6px;
+	/* Series tabs */
+	.series-tabs {
+		display: flex;
+		gap: 2px;
+		background: rgba(15, 15, 22, 0.95);
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		border-bottom: none;
+		border-radius: 0.4rem 0.4rem 0 0;
+		padding: 4px 4px 0 4px;
+	}
+
+	.series-tab {
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		border-bottom: none;
+		border-radius: 0.3rem 0.3rem 0 0;
+		padding: 4px 10px;
+		color: #888;
+		cursor: pointer;
+		font-size: 0.72rem;
+		transition: all 0.1s;
+	}
+
+	.series-tab.active {
+		background: rgba(255, 255, 255, 0.15);
+		color: #fff;
+	}
+
+	.series-tab:hover:not(.active) {
+		background: rgba(255, 255, 255, 0.1);
+	}
+
+	/* Emote panel */
+	.emote-panel {
 		background: rgba(15, 15, 22, 0.95);
 		border: 1px solid rgba(255, 255, 255, 0.12);
 		border-top: none;
 		border-radius: 0 0.4rem 0.4rem 0.4rem;
 		padding: 8px;
+	}
+
+	.emote-grid {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 6px;
 	}
 
 	.emote-btn {
@@ -207,5 +304,41 @@
 		width: 44px;
 		height: 44px;
 		border-radius: 0.3rem;
+	}
+
+	/* Pagination */
+	.pagination {
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		gap: 8px;
+		margin-top: 8px;
+		padding-top: 6px;
+		border-top: 1px solid rgba(255, 255, 255, 0.08);
+	}
+
+	.page-btn {
+		background: rgba(255, 255, 255, 0.08);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		border-radius: 0.3rem;
+		color: #aaa;
+		cursor: pointer;
+		padding: 2px 8px;
+		font-size: 0.7rem;
+	}
+
+	.page-btn:hover:not(:disabled) {
+		background: rgba(255, 255, 255, 0.15);
+		color: #fff;
+	}
+
+	.page-btn:disabled {
+		opacity: 0.3;
+		cursor: not-allowed;
+	}
+
+	.page-info {
+		color: #888;
+		font-size: 0.7rem;
 	}
 </style>
