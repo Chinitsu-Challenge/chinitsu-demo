@@ -690,6 +690,7 @@ function handleMessage(data: Record<string, unknown>) {
 			s.oppRiichi = false;
 			s.selectedIdx = null;
 			s.wallCount = 36 - 27;
+			// Points will be set from data.balances below
 			if (s.myIsOya) {
 				s.currentPlayer = myId;
 				s.turnStage = 'after_draw';
