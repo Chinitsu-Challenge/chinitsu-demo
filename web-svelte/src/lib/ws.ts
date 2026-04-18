@@ -1,7 +1,7 @@
 import { writable, get } from 'svelte/store';
 import type { GameState, AgariData, KawaEntry, SpectatorState, SpectatorPlayerData } from './types';
 import { getToken, getUuid, getUsername } from './auth';
-import { EMOTES, showEmotePopup } from './chat';
+import { EMOTES, showEmotePopup, showChatBubble } from './chat';
 
 // --- Stores ---
 export const gameState = writable<GameState>({
@@ -464,6 +464,7 @@ function handleBroadcastEvent(data: Record<string, unknown>) {
 		const text = data.text as string;
 		const isMe = dn === myDisplayName;
 		logMsg(`${isMe ? 'You' : dn}: ${text}`, 'chat');
+		showChatBubble(text, isMe);
 		return;
 	}
 

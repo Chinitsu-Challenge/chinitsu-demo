@@ -1,6 +1,13 @@
 <script lang="ts">
 	import { logs, sendChat, sendEmote } from '$lib/ws';
-	import { emoteConfig, type EmoteSeries } from '$lib/chat';
+	import {
+		emoteConfig,
+		loadEmoteConfig,
+		EMOTE_SLUGS,
+		chatTextWeight,
+		truncateChatText,
+		CHAT_MAX_WEIGHT
+	} from '$lib/chat';
 	import { onMount } from 'svelte';
 
 	let open = $state(false);
@@ -23,12 +30,24 @@
 	);
 
 	onMount(() => {
-		import('$lib/chat').then(m => m.loadEmoteConfig());
+		loadEmoteConfig();
 	});
 
+	let weight = $derived(chatTextWeight(inputText));
+	let overLimit = $derived(weight > CHAT_MAX_WEIGHT);
+
 	function submit() {
-		const text = inputText.trim();
-		if (!text) return;
+		const raw = inputText.trim();
+		if (!raw) return;
+		const text = truncateChatText(raw);
+		if (text.startsWith('/')) {
+			const emoteId = EMOTE_SLUGS[text.slice(1).toLowerCase()];
+			if (emoteId) {
+				sendEmote(emoteId);
+				inputText = '';
+				return;
+			}
+		}
 		sendChat(text);
 		inputText = '';
 	}
@@ -56,6 +75,7 @@
 
 	function sendAndClose(emoteId: string) {
 		sendEmote(emoteId);
+		showEmotes = false;
 	}
 </script>
 
@@ -80,12 +100,14 @@
 			<div class="chat-input-row">
 				<input
 					class="chat-input"
+					class:over-limit={overLimit}
 					type="text"
 					placeholder="Say something…"
-					maxlength="100"
+					maxlength="64"
 					bind:value={inputText}
 					onkeydown={onKeydown}
 				/>
+				<span class="chat-counter" class:over-limit={overLimit}>{weight}/{CHAT_MAX_WEIGHT}</span>
 				<button class="chat-send" onclick={submit}>Send</button>
 			</div>
 		</div>
@@ -134,7 +156,7 @@
 		bottom: 12px;
 		left: 12px;
 		z-index: 20;
-		font-size: 0.78rem;
+		font-size: 0.9rem;
 	}
 
 	.social-header {
@@ -143,45 +165,48 @@
 	}
 
 	.social-tab {
-		background: rgba(20, 20, 30, 0.85);
-		border: 1px solid rgba(255, 255, 255, 0.15);
+		background: rgba(20, 20, 30, 0.55);
+		border: 1px solid rgba(255, 255, 255, 0.18);
 		border-bottom: none;
-		border-radius: 0.4rem 0.4rem 0 0;
-		padding: 6px 12px;
-		color: #aaa;
+		border-radius: 0.5rem 0.5rem 0 0;
+		padding: 10px 18px;
+		color: #ccc;
 		cursor: pointer;
-		font-size: 0.8rem;
+		font-size: 0.95rem;
+		min-height: 40px;
 		transition: all 0.15s;
 	}
 
 	.social-tab:first-child {
-		border-radius: 0.4rem 0 0 0;
+		border-radius: 0.5rem 0 0 0;
 	}
 
 	.social-tab:last-child {
-		border-radius: 0 0.4rem 0 0;
+		border-radius: 0 0.5rem 0 0;
 	}
 
 	.social-tab.active {
-		background: rgba(30, 30, 45, 0.95);
+		background: rgba(30, 30, 45, 0.7);
 		color: #fff;
-		border-color: rgba(255, 255, 255, 0.25);
+		border-color: rgba(255, 255, 255, 0.3);
 	}
 
 	.social-content {
-		background: rgba(15, 15, 22, 0.95);
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		border-radius: 0 0.4rem 0.4rem 0.4rem;
+		background: rgba(15, 15, 22, 0.65);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		border-radius: 0 0.5rem 0.5rem 0.5rem;
 		overflow: hidden;
+		backdrop-filter: blur(6px);
+		min-width: 320px;
 	}
 
 	.log-entries {
-		max-height: 160px;
+		max-height: 220px;
 		overflow-y: auto;
-		padding: 6px 8px;
+		padding: 10px 12px;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: 4px;
 	}
 
 	.log-entry {
@@ -205,33 +230,50 @@
 
 	.chat-input-row {
 		display: flex;
-		border-top: 1px solid rgba(255, 255, 255, 0.1);
-		padding: 6px 8px;
-		gap: 6px;
+		align-items: center;
+		border-top: 1px solid rgba(255, 255, 255, 0.12);
+		padding: 10px 12px;
+		gap: 8px;
 	}
 
 	.chat-input {
 		flex: 1;
-		background: rgba(255, 255, 255, 0.07);
-		border: 1px solid rgba(255, 255, 255, 0.15);
-		border-radius: 0.3rem;
+		background: rgba(255, 255, 255, 0.1);
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		border-radius: 0.4rem;
 		color: #eee;
-		font-size: 0.78rem;
-		padding: 4px 8px;
+		font-size: 0.95rem;
+		padding: 8px 10px;
 		outline: none;
+		min-height: 36px;
 	}
 	.chat-input:focus {
 		border-color: rgba(255, 255, 255, 0.35);
 	}
+	.chat-input.over-limit {
+		border-color: #e57373;
+	}
+
+	.chat-counter {
+		color: #888;
+		font-size: 0.8rem;
+		align-self: center;
+		min-width: 3em;
+		text-align: right;
+	}
+	.chat-counter.over-limit {
+		color: #e57373;
+	}
 
 	.chat-send {
-		background: rgba(255, 255, 255, 0.1);
-		border: 1px solid rgba(255, 255, 255, 0.2);
-		border-radius: 0.3rem;
-		color: #ddd;
+		background: rgba(255, 255, 255, 0.15);
+		border: 1px solid rgba(255, 255, 255, 0.25);
+		border-radius: 0.4rem;
+		color: #eee;
 		cursor: pointer;
-		font-size: 0.75rem;
-		padding: 4px 10px;
+		font-size: 0.9rem;
+		padding: 8px 16px;
+		min-height: 36px;
 	}
 	.chat-send:hover {
 		background: rgba(255, 255, 255, 0.18);
@@ -240,23 +282,25 @@
 	/* Series tabs */
 	.series-tabs {
 		display: flex;
-		gap: 2px;
-		background: rgba(15, 15, 22, 0.95);
-		border: 1px solid rgba(255, 255, 255, 0.12);
+		gap: 3px;
+		background: rgba(15, 15, 22, 0.65);
+		border: 1px solid rgba(255, 255, 255, 0.15);
 		border-bottom: none;
-		border-radius: 0.4rem 0.4rem 0 0;
-		padding: 4px 4px 0 4px;
+		border-radius: 0.5rem 0.5rem 0 0;
+		padding: 6px 6px 0 6px;
+		backdrop-filter: blur(6px);
 	}
 
 	.series-tab {
-		background: rgba(255, 255, 255, 0.05);
-		border: 1px solid rgba(255, 255, 255, 0.1);
+		background: rgba(255, 255, 255, 0.08);
+		border: 1px solid rgba(255, 255, 255, 0.12);
 		border-bottom: none;
-		border-radius: 0.3rem 0.3rem 0 0;
-		padding: 4px 10px;
-		color: #888;
+		border-radius: 0.4rem 0.4rem 0 0;
+		padding: 8px 14px;
+		color: #bbb;
 		cursor: pointer;
-		font-size: 0.72rem;
+		font-size: 0.85rem;
+		min-height: 36px;
 		transition: all 0.1s;
 	}
 
@@ -271,39 +315,40 @@
 
 	/* Emote panel */
 	.emote-panel {
-		background: rgba(15, 15, 22, 0.95);
-		border: 1px solid rgba(255, 255, 255, 0.12);
+		background: rgba(15, 15, 22, 0.65);
+		border: 1px solid rgba(255, 255, 255, 0.15);
 		border-top: none;
-		border-radius: 0 0.4rem 0.4rem 0.4rem;
-		padding: 8px;
+		border-radius: 0 0.5rem 0.5rem 0.5rem;
+		padding: 12px;
+		backdrop-filter: blur(6px);
 	}
 
 	.emote-grid {
 		display: grid;
 		grid-template-columns: repeat(4, 1fr);
-		gap: 6px;
+		gap: 10px;
 	}
 
 	.emote-btn {
 		background: none;
 		border: 1px solid transparent;
-		border-radius: 0.4rem;
+		border-radius: 0.5rem;
 		cursor: pointer;
-		padding: 4px;
+		padding: 6px;
 		transition: all 0.1s;
 	}
 
 	.emote-btn:hover {
-		background: rgba(255, 255, 255, 0.1);
-		border-color: rgba(255, 255, 255, 0.2);
+		background: rgba(255, 255, 255, 0.12);
+		border-color: rgba(255, 255, 255, 0.25);
 		transform: scale(1.05);
 	}
 
 	.emote-thumb {
 		display: block;
-		width: 44px;
-		height: 44px;
-		border-radius: 0.3rem;
+		width: 64px;
+		height: 64px;
+		border-radius: 0.4rem;
 	}
 
 	/* Pagination */
@@ -318,13 +363,15 @@
 	}
 
 	.page-btn {
-		background: rgba(255, 255, 255, 0.08);
-		border: 1px solid rgba(255, 255, 255, 0.15);
-		border-radius: 0.3rem;
-		color: #aaa;
+		background: rgba(255, 255, 255, 0.1);
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		border-radius: 0.4rem;
+		color: #ccc;
 		cursor: pointer;
-		padding: 2px 8px;
-		font-size: 0.7rem;
+		padding: 6px 12px;
+		font-size: 0.85rem;
+		min-width: 32px;
+		min-height: 32px;
 	}
 
 	.page-btn:hover:not(:disabled) {

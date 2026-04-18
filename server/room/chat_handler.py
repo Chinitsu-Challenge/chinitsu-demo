@@ -1,6 +1,7 @@
 # room/chat_handler.py — 聊天与表情处理
 # 纯函数模块，不依赖 RoomManager 内部状态，通过参数注入 push 和 sessions。
 
+import re
 from typing import TYPE_CHECKING
 
 from room import protocol
@@ -11,7 +12,7 @@ if TYPE_CHECKING:
 
 CHAT_MAX_LEN = 100
 
-EMOTE_ALLOWLIST = {"thumbsup", "lol", "wow", "sorry", "skull", "think", "gg"}
+_EMOTE_ID_RE = re.compile(r'^[a-z0-9_-]{1,32}$')
 
 
 def _display_name(sessions: dict, user_id: str) -> str:
@@ -40,7 +41,7 @@ async def handle_emote(
     user_id: str,
     emote_id: str,
 ) -> None:
-    if emote_id not in EMOTE_ALLOWLIST:
+    if not _EMOTE_ID_RE.match(emote_id):
         return
     name = _display_name(sessions, user_id)
     await push.broadcast(room_name, protocol.make_emote(name, emote_id))

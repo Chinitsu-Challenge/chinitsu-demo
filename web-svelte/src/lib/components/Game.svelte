@@ -12,6 +12,7 @@
 	import ConnectionErrorOverlay from './ConnectionErrorOverlay.svelte';
 	import ErrorToast from './ErrorToast.svelte';
 	import EmotePopup from './EmotePopup.svelte';
+	import ChatBubble from './ChatBubble.svelte';
 	import { onMount } from 'svelte';
 
 	let s = $derived($gameState);
@@ -170,6 +171,7 @@
 	<PlayerLeftNotification />
 
 	<EmotePopup />
+	<ChatBubble />
 	<MessageLog />
 
 	<!-- ERR_* 游戏错误提示（4 秒自动消失） -->

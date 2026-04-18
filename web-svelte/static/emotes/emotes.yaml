@@ -1,0 +1,46 @@
+series:
+  - name: Suzuran
+    emotes:
+      - id: smile
+        src: /emotes/suzuran/suzuran_smile.png
+        label: smile
+      - id: salute
+        src: /emotes/suzuran/suzuran_salute.png
+        label: salute
+
+  - name: Mon3tr
+    emotes:
+      - id: m3_cry
+        src: /emotes/mon3tr/m3_cry.png
+      - id: m3_flower
+        src: /emotes/mon3tr/m3_flower.png
+      - id: m3_grumpy
+        src: /emotes/mon3tr/m3_grumpy.png
+      - id: m3_scared
+        src: /emotes/mon3tr/m3_scared.png
+      - id: m3_sleep
+        src: /emotes/mon3tr/m3_sleep.png
+      - id: m3_surprise
+        src: /emotes/mon3tr/m3_surprise.png
+
+  - name: Basic
+    emotes:
+      - id: thumbsup
+        src: /emotes/thumbsup.svg
+        label: nice!
+      - id: lol
+        src: /emotes/lol.svg
+        label: lol
+      - id: wow
+        src: /emotes/wow.svg
+        label: wow
+      - id: sorry
+        src: /emotes/sorry.svg
+        label: sorry
+      - id: skull
+        src: /emotes/skull.svg
+        label: rip
+      - id: gg
+        src: /emotes/gg.svg
+        label: GG
+
