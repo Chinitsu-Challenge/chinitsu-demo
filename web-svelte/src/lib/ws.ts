@@ -291,8 +291,8 @@ export function connect(
 				phase: 'waiting',
 				myHand: [],
 				myIsOya: false,
-				myPoints: 150000,
-				oppPoints: 150000,
+				myPoints: settings?.initialPoint ?? 150000,
+				oppPoints: settings?.initialPoint ?? 150000,
 				myRiichi: false,
 				oppRiichi: false,
 				myKawa: [],
@@ -585,8 +585,11 @@ function handleMessage(data: Record<string, unknown>) {
 
 	// 3. Non-broadcast protocol events (unicast, no action field)
 	if (data.event === 'room_created') {
-		// 记录当前用户是否为房主（仅创建者收到此消息，且 is_owner: true）
 		if (data.is_owner) isOwner.set(true);
+		if (data.initial_point != null) {
+			const ip = data.initial_point as number;
+			gameState.update(s => ({ ...s, myPoints: ip, oppPoints: ip }));
+		}
 		return;
 	}
 

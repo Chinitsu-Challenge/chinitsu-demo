@@ -12,7 +12,7 @@ from typing import Any
 
 from fastapi import WebSocket
 
-from game import ChinitsuGame
+from game import ChinitsuGame, default_rules as _game_default_rules
 from redis_client import get_redis
 from room.models import (
     Room, PlayerSession, SpectatorSession, RoomStatus, RoomEvent,
@@ -599,6 +599,7 @@ class RoomManager:
         )
 
         # 通知房主
+        _initial_point = room.rules.get("initial_point", _game_default_rules["initial_point"])
         await self.push.unicast(room_name, user_id, {
             "broadcast": False,
             "event": "room_created",
@@ -606,6 +607,7 @@ class RoomManager:
             "user_id": user_id,
             "display_name": display_name,
             "is_owner": True,
+            "initial_point": _initial_point,
         })
 
         # vs_bot 房间：额外推送一个 player_joined 事件，让前端知道对手是 CPU
