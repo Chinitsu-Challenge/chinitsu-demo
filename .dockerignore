@@ -1,0 +1,43 @@
+# VCS
+.git
+.gitignore
+.github
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.venv
+venv
+tests
+server/room/tests
+
+# Node / Svelte
+web-svelte/node_modules
+web-svelte/build
+web-svelte/.svelte-kit
+web-svelte/.env*
+
+# Local state / secrets
+chinitsu.db
+*.log
+.env
+.env.*
+
+# Editor / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Docs not needed at runtime
+memory
+CLAUDE.md
+**/CLAUDE.md
+RULES.md
+README*.md
+
+# Misc
+scripts
+client
