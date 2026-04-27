@@ -46,7 +46,7 @@
 <div id="lobby" class="screen">
 	<div class="lobby-box">
 		<h1>Chinitsu Showdown</h1>
-		<p class="subtitle">清一色对战</p>
+		<p class="subtitle">清一色对战喵</p>
 		<h2 class="auth-title">{mode === 'login' ? 'Login' : 'Register'}</h2>
 		<div class="form-group">
 			<label for="input-username">Username</label>
