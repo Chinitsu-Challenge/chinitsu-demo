@@ -8,7 +8,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}   # Chinitsu-Challenge/chinitsu-demo
+  IMAGE_NAME: chinitsu-challenge/chinitsu-demo   # Chinitsu-Challenge/chinitsu-demo
 
 jobs:
   build-and-push:
@@ -68,10 +68,15 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             set -e
-            cd /www/wwwroot/chinitsu-demo          # ←←← 改成你实际路径
+            cd /www/wwwroot/chinitsu-demo
+            
             docker login ghcr.io -u ${{ github.actor }} --password-stdin <<< ${{ secrets.GITHUB_TOKEN }}
+            
+            # 下面这三行是关键，保证每次都拉最新镜像并强制重建
             docker compose pull
-            docker compose up -d --remove-orphans
-            docker image prune -f
-            echo "✅ 部署完成！当前容器状态："
+            docker compose down --remove-orphans
+            docker compose up -d --force-recreate --pull always
+            
+            echo "✅ 部署完成！"
             docker compose ps
+            docker compose logs app --tail 20

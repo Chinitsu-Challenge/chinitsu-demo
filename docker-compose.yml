@@ -1,7 +1,7 @@
 services:
   app:
     # build: . # 开发时用这个，生产时注释
-    image: ghcr.io/Chinitsu-Challenge/chinitsu-demo:latest
+    image: ghcr.io/chinitsu-challenge/chinitsu-demo:latest
     container_name: chinitsu-demo
     restart: unless-stopped
     ports:
