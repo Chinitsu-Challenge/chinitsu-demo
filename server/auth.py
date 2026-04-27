@@ -1,3 +1,4 @@
+import os
 import uuid as _uuid
 from datetime import datetime, timedelta, timezone
 
@@ -6,7 +7,7 @@ from passlib.context import CryptContext
 
 from database import get_db
 
-SECRET_KEY = "chinitsu-showdown-secret-key-change-in-production"
+SECRET_KEY = os.environ.get("SECRET_KEY", "chinitsu-showdown-secret-key-change-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 hours
 
