@@ -1,6 +1,6 @@
 # Chinitsu Showdown - 清一色对战
 
-两人实时麻将对战游戏，专注于**清一色（Chinitsu）**玩法，使用 WebSocket 进行实时通信。
+两人实时麻将对战游戏，专注于**清一色（Chinitsu）**玩法。
 
 ---
 
