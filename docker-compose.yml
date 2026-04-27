@@ -1,6 +1,7 @@
 services:
   app:
-    image: ghcr.io/kennylin/chinitsu-demo:latest
+    build: .
+    container_name: chinitsu-demo
     restart: unless-stopped
     ports:
       - "127.0.0.1:8000:8000"
