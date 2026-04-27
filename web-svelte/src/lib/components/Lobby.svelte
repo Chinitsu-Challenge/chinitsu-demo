@@ -72,7 +72,7 @@
 <div id="lobby" class="screen">
 	<div class="lobby-box">
 		<h1>Chinitsu Showdown</h1>
-		<p class="subtitle">清一色对战喵~</p>
+		<p class="subtitle">清一色对战</p>
 		<div class="user-info">
 			<span>Logged in as <strong>{username}</strong></span>
 			<button class="link-btn" onclick={handleLogout}>Logout</button>
