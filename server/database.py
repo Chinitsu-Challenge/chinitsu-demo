@@ -1,7 +1,10 @@
+import os
 from pathlib import Path
 import aiosqlite
 
-DB_PATH = Path(__file__).resolve().parent.parent / "chinitsu.db"
+_data_env = os.environ.get("DATA_DIR", "")
+_data_dir = Path(_data_env) if _data_env else Path(__file__).resolve().parent.parent
+DB_PATH = _data_dir / "chinitsu.db"
 
 
 async def init_db():

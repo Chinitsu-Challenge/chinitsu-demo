@@ -1,0 +1,31 @@
+services:
+  app:
+    image: ghcr.io/kennylin/chinitsu-demo:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-chinitsu-showdown-secret-key-change-in-production}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      DATA_DIR: /data
+    volumes:
+      - chinitsu_data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  chinitsu_data:
+  redis_data:
