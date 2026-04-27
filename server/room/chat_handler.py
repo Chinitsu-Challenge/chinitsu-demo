@@ -1,6 +1,6 @@
 # room/chat_handler.py — 聊天与表情处理
 # 纯函数模块，不依赖 RoomManager 内部状态，通过参数注入 push 和 sessions。
-
+#pr一行注释
 import re
 from typing import TYPE_CHECKING
 
