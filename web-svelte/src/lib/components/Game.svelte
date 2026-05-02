@@ -93,6 +93,7 @@
 			<div class="cp-divider"></div>
 			<div class="cp-game-info">
 				<span class="cp-stat">{s.phase === 'playing' ? `Wall: ${s.wallCount}` : ''}</span>
+				<span class="cp-stat cp-round">{s.phase === 'playing' || s.phase === 'ended' ? `Round ${s.roundNo + 1}/${s.roundLimit}` : ''}</span>
 				<span class="cp-stat">{s.kyoutaku > 0 ? `立直棒×${s.kyoutaku}` : ''}</span>
 			</div>
 			<span class="center-mid">{turnLabel}</span>

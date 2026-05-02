@@ -23,6 +23,8 @@
 			selectedIdx: null,
 			wallCount: 36,
 			kyoutaku: 0,
+			roundNo: 0,
+			roundLimit: 8,
 			oppDisplayName: '',
 			matchResult: null,
 		});

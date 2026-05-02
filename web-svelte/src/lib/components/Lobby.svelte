@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { connect, type RoomSettings } from '$lib/ws';
+	import { connect, existingRoomStore, type RoomSettings } from '$lib/ws';
 	import { getUsername, logout } from '$lib/auth';
 
 	interface Props {
@@ -10,6 +10,10 @@
 	let roomName = $state('');
 	let status = $state('');
 	let connecting = $state(false);
+	let existingRoom = $state<string | null>(null);
+	// Post-resolve path: server closes after onopen, store is set reactively
+	let existingRoomFromStore = $derived($existingRoomStore);
+	let shownExistingRoom = $derived(existingRoom ?? existingRoomFromStore);
 
 	// vs-CPU
 	let vsBot = $state(false);
@@ -53,10 +57,25 @@
 			// duplicate_id: +page.svelte switches to the dedicated waiting screen,
 			// so we just clear the connecting state here — no error text needed.
 			if (result.reason !== 'duplicate_id') {
-				status = result.reason ?? 'Connection failed.';
+				if (result.reason === 'already_in_room' && result.existingRoom) {
+					existingRoom = result.existingRoom;
+					status = '';
+				} else {
+					existingRoom = null;
+					existingRoomStore.set(null);
+					status = result.reason ?? 'Connection failed.';
+				}
 			}
 			connecting = false;
 		}
+	}
+
+	async function handleRejoin() {
+		if (!shownExistingRoom) return;
+		roomName = shownExistingRoom;
+		existingRoom = null;
+		existingRoomStore.set(null);
+		await handleConnect();
 	}
 
 	function handleRoomKeydown(e: KeyboardEvent) {
@@ -160,7 +179,12 @@
 		</div>
 
 		<button class="btn btn-primary" disabled={connecting} onclick={handleConnect}>Connect</button>
-		{#if status}
+		{#if shownExistingRoom}
+			<div class="already-in-room">
+				<p class="status-msg">You are already in room <strong>"{shownExistingRoom}"</strong>.</p>
+				<button class="btn btn-primary" onclick={handleRejoin}>Rejoin "{shownExistingRoom}"</button>
+			</div>
+		{:else if status}
 			<p class="status-msg">{status}</p>
 		{/if}
 	</div>
@@ -297,5 +321,30 @@
 	.cheat-input[type='number'] {
 		appearance: textfield;
 		-moz-appearance: textfield;
+	}
+
+	.already-in-room {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.5rem;
+	}
+
+	@media (pointer: coarse) {
+		.setting-row {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.4rem;
+		}
+		.setting-label {
+			width: auto;
+		}
+		.preset-group {
+			flex-wrap: wrap;
+		}
+		.cheat-input {
+			width: 100%;
+		}
 	}
 </style>

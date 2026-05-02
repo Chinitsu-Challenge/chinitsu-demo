@@ -25,6 +25,8 @@
   --tile-h: clamp(36px, 9.7vw, 58px);
   --kawa-tw: clamp(24px, 6.5vw, 40px);
   --kawa-th: clamp(33px, 8.8vw, 54px);
+  /* action bar: min-height 56px + padding-top 10px + padding-bottom calc(10+safe-area) */
+  --action-bar-h: calc(76px + env(safe-area-inset-bottom));
 }
 
 html, body {
@@ -152,7 +154,7 @@ html, body {
 #game {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100dvh;
   background: radial-gradient(ellipse at center, var(--felt) 0%, var(--felt-dark) 100%);
   padding: 0;
 }
@@ -228,6 +230,14 @@ html, body {
   min-width: 60px;
 }
 
+.cp-round {
+  text-align: center;
+  flex: 1;
+  color: var(--accent);
+  font-weight: 600;
+  min-width: 0;
+}
+
 /* Action bar */
 .action-bar {
   display: flex;
@@ -236,6 +246,7 @@ html, body {
   gap: 10px;
   flex-wrap: wrap;
   padding: 10px 20px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
   min-height: 56px;
   background: rgba(0, 0, 0, 0.35);
   border-top: 1px solid rgba(255, 255, 255, 0.1);
@@ -502,4 +513,18 @@ html, body {
   .lobby-box { padding: 32px 24px; min-width: auto; width: 90%; }
   .action-buttons { gap: 4px; }
   .btn-action { padding: 6px 12px; font-size: 0.8em; }
+}
+
+@media (pointer: coarse) {
+  #lobby {
+    align-items: flex-start;
+    overflow-y: auto;
+    padding: 20px 0 40px;
+  }
+  .lobby-box {
+    min-width: auto;
+    width: 92%;
+    max-width: 420px;
+    padding: 28px 20px;
+  }
 }

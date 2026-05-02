@@ -220,11 +220,14 @@ class RoomManager:
             await self.snapshot_mgr.load_snapshot(room_name)
             logger.info("[startup] 恢复 ENDED 房间 [%s]", room_name)
 
-        # ── 6. 重新调度房间寿命计时器（剩余时间）────────────────────
-        remaining_lifetime = max(30.0, room.expires_at - now)
+        # ── 6. 重新调度房间寿命计时器 ────────────────────────────────
+        # 服务重启（如 CD 部署）不应缩短房间寿命：以原始 expires_at 为准，
+        # 但给满 ROOM_MAX_LIFETIME_SEC，让正在对局的玩家不会因部署而中断。
+        room.expires_at = now + ROOM_MAX_LIFETIME_SEC
+        await self._sync_room_to_redis(room)
         await self.timers.schedule(
             f"room_expire:{room_name}",
-            remaining_lifetime,
+            ROOM_MAX_LIFETIME_SEC,
             self._on_room_expired,
             room_name, room.room_id,
         )
@@ -378,8 +381,9 @@ class RoomManager:
         if active_room is not None and active_room != room_name:
             if not ws_accepted:
                 await ws.accept()
-            code, reason = WS_CLOSE_ALREADY_IN_ROOM
-            await ws.close(code=code, reason=reason)
+            code, _ = WS_CLOSE_ALREADY_IN_ROOM
+            await ws.send_json({"type": "already_in_room", "room": active_room})
+            await ws.close(code=code, reason=f"already_in_room:{active_room}")
             logger.info("拒绝连接：玩家 %s 已在房间 [%s]，不能加入 [%s]",
                         user_id[:8], active_room, room_name)
             return False
@@ -389,8 +393,9 @@ class RoomManager:
         if spectating_room is not None and spectating_room != room_name:
             if not ws_accepted:
                 await ws.accept()
-            code, reason = WS_CLOSE_ALREADY_IN_ROOM
-            await ws.close(code=code, reason=reason)
+            code, _ = WS_CLOSE_ALREADY_IN_ROOM
+            await ws.send_json({"type": "already_in_room", "room": spectating_room})
+            await ws.close(code=code, reason=f"already_in_room:{spectating_room}")
             logger.info("拒绝连接：旁观者 %s 已在房间 [%s]，不能加入 [%s]",
                         user_id[:8], spectating_room, room_name)
             return False
@@ -1242,10 +1247,12 @@ class RoomManager:
             )
 
             # 取消所有定时器
-            await self.timers.cancel_prefix(f"room_expire:{room_name}")
-            await self.timers.cancel_prefix(f"reconnect:{room_name}")
-            await self.timers.cancel_prefix(f"skip_ron:{room_name}")
-            await self.timers.cancel_prefix(f"action:{room_name}")
+            # room_expire / skip_ron 是单 key，用精确匹配；reconnect / action 有 :{user_id} 后缀，
+            # 用 cancel_prefix 但加 ":" 分隔符防止误匹配同前缀的其他房间（如 "1" vs "123"）。
+            await self.timers.cancel(f"room_expire:{room_name}")
+            await self.timers.cancel_prefix(f"reconnect:{room_name}:")
+            await self.timers.cancel(f"skip_ron:{room_name}")
+            await self.timers.cancel_prefix(f"action:{room_name}:")
 
             # 清理子服务数据
             self.ready_svc.cleanup_room(room_name)
@@ -1278,11 +1285,19 @@ class RoomManager:
     def get_user_active_room(self, user_id: str) -> str | None:
         """
         返回玩家当前所在的房间名（在线或离线均算）。
+        例外：ENDED 状态下已离线的玩家不视为"占用"房间，可自由加入新房间。
         若不在任何房间则返回 None。
         """
         for room_name, room_sessions in self.sessions.items():
-            if user_id in room_sessions:
-                return room_name
+            if user_id not in room_sessions:
+                continue
+            session = room_sessions[user_id]
+            room = self.rooms.get(room_name)
+            # Offline player in an ENDED room — treat as free so they can join new rooms.
+            # The ENDED room persists for the online winner to see the result.
+            if room and room.status == RoomStatus.ENDED and not session.online:
+                continue
+            return room_name
         return None
 
     def get_user_spectating_room(self, user_id: str) -> str | None:

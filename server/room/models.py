@@ -38,8 +38,8 @@ class RoomEvent(str, Enum):
 
 # ── 默认配置 ────────────────────────────────────────────────────
 ROOM_MAX_LIFETIME_SEC = 40 * 60      # 房间绝对寿命：40 分钟
-RECONNECT_TIMEOUT_SEC = 120          # 断线重连超时：120 秒
-SKIP_RON_TIMEOUT_SEC = 30            # AFTER_DISCARD 等待超时：30 秒
+RECONNECT_TIMEOUT_SEC = 300         # 断线重连超时：120 秒
+SKIP_RON_TIMEOUT_SEC = 300            # AFTER_DISCARD 等待超时：60 秒
 DEFAULT_ROUND_LIMIT = 8              # 默认比赛轮数上限
 
 

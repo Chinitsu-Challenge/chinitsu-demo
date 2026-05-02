@@ -21,6 +21,8 @@ export const gameState = writable<GameState>({
 	selectedIdx: null,
 	wallCount: 36,
 	kyoutaku: 0,
+	roundNo: 0,
+	roundLimit: 8,
 	oppDisplayName: '',
 	matchResult: null
 });
@@ -36,6 +38,9 @@ export const playerLeftNotif = writable<{ displayName: string } | null>(null);
 
 // --- Connection error overlay (post-connection unexpected WS close / watchdog) ---
 export const wsError = writable<{ message: string } | null>(null);
+
+// --- Already-in-room rejection: set when server closes with already_in_room ---
+export const existingRoomStore = writable<string | null>(null);
 
 // --- In-game error toast (ERR_* server messages) ---
 export const errorToast = writable<{ message: string; id: number } | null>(null);
@@ -132,7 +137,7 @@ function stopWatchingHeartbeat() {
 // --- Watchdog: detect silent hangs during gameplay ---
 // If no WS message arrives for WATCHDOG_MS while in 'playing' phase,
 // the connection is likely dead (TCP keepalive didn't catch it). Show the error overlay.
-const WATCHDOG_MS = 60_000;
+const WATCHDOG_MS = 600_000;
 let _watchdogTimer: ReturnType<typeof setTimeout> | null = null;
 // Suppress watchdog while we know the opponent is reconnecting (up to 120s server timeout).
 let _opponentDisconnected = false;
@@ -155,7 +160,7 @@ function mapCloseReason(code: number, reason: string): string {
 	if (reason === 'room_expired')       return '房间已过期（超过 40 分钟未活动）。';
 	if (reason === 'room_closed')        return '房间已被关闭。';
 	if (reason === 'invalid_room_name')  return '房间不存在或名称非法。';
-	if (reason === 'already_in_room')    return '你已在其他房间中，请刷新页面。';
+	if (reason.startsWith('already_in_room')) return '你已在其他房间中，请刷新页面。';
 	if (code === 1001)                   return '服务器已关闭该房间。';
 	if (code === 1008)                   return '登录已过期，请重新登录后再试。';
 	if (code === 1006)                   return '网络连接意外中断。';
@@ -232,9 +237,20 @@ export interface RoomSettings {
 export function connect(
 	roomName: string,
 	settings?: RoomSettings
-): Promise<{ ok: boolean; reason?: string }> {
+): Promise<{ ok: boolean; reason?: string; existingRoom?: string }> {
 	stopWatchingHeartbeat();
 	stopSendingHeartbeat();
+	// Tear down any existing connection before opening a new one.
+	// Without this, the old TCP connection stays alive on the server (the JS object
+	// losing its reference doesn't close the socket), so the server sees the player
+	// as still online and rejects the new connection with duplicate_id.
+	if (ws && ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
+		ws.onclose = null;
+		ws.onopen = null;
+		ws.onmessage = null;
+		ws.onerror = null;
+		ws.close();
+	}
 	lastRoomName = roomName;
 	myId = getUuid();
 	myDisplayName = getUsername();
@@ -242,7 +258,7 @@ export function connect(
 
 	return new Promise((resolve) => {
 		let resolved = false;
-		const done = (result: { ok: boolean; reason?: string }) => {
+		const done = (result: { ok: boolean; reason?: string; existingRoom?: string }) => {
 			if (!resolved) {
 				resolved = true;
 				resolve(result);
@@ -304,6 +320,8 @@ export function connect(
 				selectedIdx: null,
 				wallCount: 36,
 				kyoutaku: 0,
+				roundNo: 0,
+				roundLimit: 8,
 				oppDisplayName: '',
 				matchResult: null,
 			});
@@ -314,7 +332,21 @@ export function connect(
 
 		ws.onmessage = ({ data }) => {
 			resetWatchdog(); // any message from server resets the silence timer
-			handleMessage(JSON.parse(data));
+			const msg = JSON.parse(data) as Record<string, unknown>;
+			// Server sends this JSON message before closing for already_in_room rejections.
+			// Using a message instead of relying solely on close reason because browsers
+			// sometimes strip the reason from close frames with code 1003.
+			if (msg.type === 'already_in_room') {
+				const room = typeof msg.room === 'string' ? msg.room : null;
+				if (!resolved) {
+					done({ ok: false, reason: 'already_in_room', existingRoom: room ?? undefined });
+				} else {
+					gameState.update(s => ({ ...s, phase: 'lobby' }));
+					existingRoomStore.set(room);
+				}
+				return;
+			}
+			handleMessage(msg);
 		};
 
 		ws.onclose = (event) => {
@@ -337,11 +369,14 @@ export function connect(
 						return;
 					}
 					const reason =
-						event.reason === 'room_full'         ? 'Room is full!'
+						event.reason === 'room_full'             ? 'Room is full!'
 						: event.reason === 'spectator_room_full' ? 'Spectator seats are full (max 10).'
-						: event.reason === 'already_in_room'     ? 'You are already in another room.'
+						: event.reason.startsWith('already_in_room') ? 'already_in_room'
 						: 'Connection refused.';
-					done({ ok: false, reason });
+					const existingRoom = event.reason.startsWith('already_in_room:')
+						? event.reason.slice('already_in_room:'.length)
+						: undefined;
+					done({ ok: false, reason, existingRoom });
 				} else {
 					done({ ok: false, reason: 'Connection failed.' });
 				}
@@ -352,6 +387,25 @@ export function connect(
 			// 以下两种 phase 已有专属 UI 处理，不显示通用错误 overlay
 			if (phase === 'lobby')          return; // room_closed / leave_room 事件已导航
 			if (phase === 'room_dissolved') return; // RoomDissolvedOverlay 负责倒计时
+
+			// already_in_room can arrive post-resolve if onopen fired before server closed.
+			// Reset to lobby and surface the rejoin prompt instead of a generic error.
+			if (event.reason.startsWith('already_in_room')) {
+				const room = event.reason.startsWith('already_in_room:')
+					? event.reason.slice('already_in_room:'.length)
+					: null;
+				gameState.update(s => ({ ...s, phase: 'lobby' }));
+				existingRoomStore.set(room);
+				return;
+			}
+
+			// duplicate_id post-resolve: old TCP connection was still alive on the server
+			// when the new connection arrived (race). Treat it like a lobby reset so the
+			// user can retry, rather than showing a confusing disconnect error.
+			if (event.reason === 'duplicate_id') {
+				gameState.update(s => ({ ...s, phase: 'lobby' }));
+				return;
+			}
 
 			// 其他所有情况：玩家在游戏中意外断连，显示连接错误 overlay
 			wsError.set({ message: mapCloseReason(event.code, event.reason) });
@@ -571,6 +625,8 @@ function handleMessage(data: Record<string, unknown>) {
 				currentPlayer: data.current_player as string,
 				wallCount: data.wall_count as number,
 				kyoutaku: data.kyoutaku_number as number,
+				roundNo: (data.round_no as number) ?? s.roundNo,
+				roundLimit: (data.round_limit as number) ?? s.roundLimit,
 				selectedIdx: null,
 			};
 		});
@@ -723,6 +779,8 @@ function handleMessage(data: Record<string, unknown>) {
 			s.oppRiichi = false;
 			s.selectedIdx = null;
 			s.wallCount = 36 - 27;
+			if (data.round_no !== undefined) s.roundNo = data.round_no as number;
+			if (data.round_limit !== undefined) s.roundLimit = data.round_limit as number;
 			// Points will be set from data.balances below
 			if (s.myIsOya) {
 				s.currentPlayer = myId;
