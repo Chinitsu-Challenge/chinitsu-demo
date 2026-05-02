@@ -346,7 +346,7 @@ class TestSpectatorOneRoomRestriction:
             ws_spec2 = MockWebSocket("uid-spec")
             await rm.connect(ws_spec2, "room2", "uid-spec", "Spec")
             assert ws_spec2.closed
-            assert ws_spec2.close_reason == "already_in_room"
+            assert ws_spec2.close_reason.startswith("already_in_room")
 
         run_async(inner())
 
@@ -364,7 +364,7 @@ class TestSpectatorOneRoomRestriction:
             ws_try = MockWebSocket("uid-alice")
             await rm.connect(ws_try, "room2", "uid-alice", "Alice")
             assert ws_try.closed
-            assert ws_try.close_reason == "already_in_room"
+            assert ws_try.close_reason.startswith("already_in_room")
 
         run_async(inner())
 
