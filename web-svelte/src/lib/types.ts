@@ -26,6 +26,8 @@ export interface GameState {
 	selectedIdx: number | null;
 	wallCount: number;
 	kyoutaku: number;
+	roundNo: number;
+	roundLimit: number;
 	oppDisplayName: string;
 	matchResult: MatchResult | null;
 }

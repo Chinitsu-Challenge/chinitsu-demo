@@ -124,7 +124,7 @@ class ReconnectManager:
         if len(online_ids) == 0 and not room.vs_bot:
             logger.info("RECONNECT 中双方均断线，销毁房间 [%s]", room_name)
             # 取消所有定时器
-            await self._rm.timers.cancel_prefix(f"reconnect:{room_name}")
+            await self._rm.timers.cancel_prefix(f"reconnect:{room_name}:")
             await self._rm._do_transition(room, RoomEvent.BOTH_OFFLINE)
             await self._rm.cleanup_room(room_name, room.room_id, "both_offline")
 

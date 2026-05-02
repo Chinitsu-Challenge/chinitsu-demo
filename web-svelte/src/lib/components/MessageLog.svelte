@@ -82,10 +82,10 @@
 <div id="social-panel">
 	<div class="social-header">
 		<button class="social-tab" class:active={open} onclick={() => { open = !open; showEmotes = false; }}>
-			💬 Chat
+			💬<span class="label"> Chat</span>
 		</button>
 		<button class="social-tab" class:active={showEmotes} onclick={() => { showEmotes = !showEmotes; open = false; }}>
-			🃏 Emotes
+			🃏<span class="label"> Emotes</span>
 		</button>
 	</div>
 
@@ -387,5 +387,72 @@
 	.page-info {
 		color: #888;
 		font-size: 0.7rem;
+	}
+
+	/* ── Mobile (touch) layout ── */
+	@media (pointer: coarse) {
+		/* Pinned to top-left; width driven by content (tabs + open panel) */
+		#social-panel {
+			top: 0;
+			bottom: auto;
+			left: 0;
+		}
+
+		/* Tab row: natural width, no stretch */
+		.social-header {
+			gap: 0;
+			padding-top: env(safe-area-inset-top);
+		}
+
+		/* Tabs: compact emoji buttons, flat on top, round on bottom */
+		.social-tab {
+			text-align: center;
+			font-size: 1.1rem;
+			padding: 10px 14px;
+			min-height: 44px;
+			/* flat top — aligns flush with screen edge */
+			border-top: none;
+			border-radius: 0 0 0.5rem 0.5rem;
+		}
+		.social-tab:first-child {
+			border-radius: 0 0 0 0.5rem;
+		}
+		.social-tab:last-child {
+			border-radius: 0 0 0.5rem 0;
+		}
+
+		/* Hide text labels, keep emoji only */
+		.social-tab span.label {
+			display: none;
+		}
+
+		/* Content panels: capped to viewport width so nothing clips on the right */
+		.social-content {
+			width: calc(100vw - 8px);
+			max-width: 380px;
+			min-width: 0;
+			border-radius: 0 0 0.5rem 0.5rem;
+			max-height: 45vh;
+			overflow-y: auto;
+		}
+
+		.series-tabs {
+			width: calc(100vw - 8px);
+			max-width: 380px;
+			border-radius: 0;
+		}
+
+		.emote-panel {
+			width: calc(100vw - 8px);
+			max-width: 380px;
+			border-radius: 0 0 0.5rem 0.5rem;
+			max-height: 45vh;
+			overflow-y: auto;
+		}
+
+		.emote-thumb {
+			width: 48px;
+			height: 48px;
+		}
 	}
 </style>
